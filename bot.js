@@ -411,13 +411,15 @@ function getFormattedTime() {
     return `${y}/${m}/${d} ${hh}:${mm}:${ss}`;
 }
 
-// فرمت آیدی عددی با ۴ نقطه در وسط
+// فرمت آیدی عددی با ماسک کردن دقیق ۴ رقم وسط
 function maskUserIdSpecial(userId) {
     const str = userId.toString();
     if (str.length <= 4) return str;
-    const start = str.substring(0, 2);
-    const end = str.substring(str.length - 2);
-    return `${start}....${end}`;
+    const len = str.length;
+    const midStart = Math.max(1, Math.floor(len / 2) - 2);
+    const start = str.substring(0, midStart);
+    const end = str.substring(midStart + 4);
+    return `${start}****${end}`;
 }
 
 async function sendChannelReport(order) {
@@ -425,14 +427,16 @@ async function sendChannelReport(order) {
         const channelId = REPORT_CHANNEL;
         const maskedUserId = maskUserIdSpecial(order.userId);
         const formattedTime = getFormattedTime();
+        const discountStr = order.discountAmount > 0 ? `\n🎁 تخفیف اعمال شده: <b>${order.discountAmount.toLocaleString()} تومان</b>` : '';
 
         const reportMsg = 
-            `🛍️ <b>گزارش خرید جدید | نوا شاپ</b>\n\n` +
-            `👤 خریدار: <code>${maskedUserId}</code>\n` +
-            `🛒 محصول: <b>${escapeHTML(order.giftName)}</b>\n` +
-            `💳 مبلغ پرداخت شده: <b>${order.amount.toLocaleString()} تومان</b>\n\n` +
+            `🛍️ <b>گزارش خرید موفق | نوا شاپ</b> 🛍️\n\n` +
+            `👤 خریدار (آیدی): <code>${maskedUserId}</code>\n` +
+            `🛒 محصول خریداری شده: <b>${escapeHTML(order.giftName)}</b>\n` +
+            `💳 مبلغ پرداختی: <b>${order.amount.toLocaleString()} تومان</b>${discountStr}\n\n` +
+            `✅ این سفارش با موفقیت و بالاترین سرعت انجام شد.\n` +
             `⏰ زمان معامله: ${formattedTime}\n` +
-            `🤖 ربات ثبت‌کننده: @${BOT_USERNAME}`;
+            `🤖 ربات فروشگاه: @${BOT_USERNAME}`;
 
         const inlineKeyboard = {
             reply_markup: {
@@ -780,7 +784,7 @@ function renderDiscountList() {
     shown.forEach(([code, c]) => {
         const expiryText = c.expiresAt ? formatTehranDate(c.expiresAt) : 'بدون انقضا';
         t +=
-            `🎫 کد: ||${escapeHTML(code)}|| — ${c.percent}%\n` +
+            `🎫 کد: <tg-spoiler>${escapeHTML(code)}</tg-spoiler> — ${c.percent}%\n` +
             `   📦 ${escapeHTML(describeDiscountProducts(c))}\n` +
             `   👥 مصرف: ${c.usedCount || 0}/${c.capacity || '∞'} | ${getDiscountStatusText(c)}\n` +
             `   ⏳ انقضا: ${escapeHTML(expiryText)}\n\n`;
@@ -1220,6 +1224,7 @@ async function updatePrices() {
     if (priceUpdating) return;
     priceUpdating = true;
     try {
+        // اتصال دقیق و مستقیم به API جهانی بایننس برای محاسبه قیمت گرام به دلار
         const [brsData, binanceData] = await Promise.all([
             httpGetJson(BRSAPI_URL),
             httpGetJson('https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT')
@@ -1253,6 +1258,7 @@ async function updatePrices() {
             const t = parseFloat(binanceData.price);
             if (!isNaN(t) && t > 0) {
                 priceCache.tonUsdt = t;
+                // ضرب قیمت دلاری بایننس در قیمت تومانی دریافت شده
                 tonToman = Math.round(t * usdNow);
             }
         }
@@ -1340,7 +1346,7 @@ function getShopKeyboard() {
         reply_markup: {
             keyboard: [
                 [B('📦 سفارش های اخیر من', BTN_PRIMARY)],
-                [B('⭐️ استارز', BTN_SUCCESS)],
+                [B('⭐️️ استارز', BTN_SUCCESS)],
                 [B('💠 خرید ارز گرام ( GRAM )', BTN_PRIMARY)],
                 [B('🎁 گیفت استارزی', BTN_PRIMARY)],
                 [B('برگشت ↩️', BTN_DANGER)]
@@ -1364,7 +1370,7 @@ function getAccountKeyboard() {
         reply_markup: {
             keyboard: [
                 [B('📦 سفارش های معلق من', BTN_PRIMARY), B('📦 سفارش های اخیر من', BTN_PRIMARY)],
-                [B('برگشت ↩️️', BTN_DANGER)]
+                [B('برگشت ↩', BTN_DANGER)]
             ],
             resize_keyboard: true
         }
@@ -1439,7 +1445,7 @@ async function sendGiftMenu(chatId, userData) {
         if (GIFT_PRODUCTS[i + 1]) row.push(B(GIFT_PRODUCTS[i + 1].name, BTN_PRIMARY));
         rows.push(row);
     }
-    rows.push([B('برگشت ↩️️', BTN_DANGER)]);
+    rows.push([B('برگشت ↩', BTN_DANGER)]);
     await safeSendMessage(chatId, t, { reply_markup: { keyboard: rows, resize_keyboard: true } });
 }
 
@@ -1851,7 +1857,7 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (textIs(text, '⭐️️ استارز')) {
+    if (textIs(text, '⭐ استارز')) {
         await sendStarMenu(chatId, userData);
         return;
     }
@@ -1955,15 +1961,30 @@ bot.on('message', async (msg) => {
         const receiptsList = Object.entries(db.receipts).filter(([k, r]) => r.status === 'approved');
         const ordersList = Object.entries(db.orders).filter(([k, o]) => o.status === 'completed');
 
-        let msg = `<b>📊 گزارش فعالیت‌ها و تراکنش‌های ربات</b>\n\n`;
-        msg += `<b>💳 رسیدهای واریزی تایید شده (${receiptsList.length}):</b>\n`;
+        let msg = `<b>📊 گزارش دقیق فعالیت‌ها و تراکنش‌های ربات</b>\n\n`;
+        
+        msg += `<b>💳 رسیدهای واریزی تایید شده (۱۰ رسید اخیر):</b>\n`;
         receiptsList.slice(-10).reverse().forEach(([rid, r], idx) => {
-            msg += `${idx + 1}. کد: <code>${rid}</code> | کاربر: <code>${r.userId}</code> | مبلغ: ${r.amount.toLocaleString()} تومان\n`;
+            msg += `${idx + 1}. کد: <code>${rid}</code> | آیدی کاربر: <code>${r.userId}</code> | مبلغ: ${r.amount.toLocaleString()} تومان | تاریخ: ${formatTehranDate(r.time)}\n`;
         });
 
-        msg += `\n<b>🛍️ فاکتورهای تکمیل‌شده (${ordersList.length}):</b>\n`;
-        ordersList.slice(-10).reverse().forEach(([oid, o], idx) => {
-            msg += `${idx + 1}. کد: <code>${oid}</code> | محصول: ${escapeHTML(o.giftName)} | کاربر: <code>${o.userId}</code> | ${o.amount.toLocaleString()} تومان\n`;
+        const gramOrders = ordersList.filter(([k, o]) => o.giftName.includes('گرام'));
+        const starOrders = ordersList.filter(([k, o]) => o.giftName.includes('استارز تلگرام'));
+        const giftOrders = ordersList.filter(([k, o]) => o.giftName.includes('گیفت'));
+
+        msg += `\n<b>💠 فاکتورهای خرید ارز گرام (۵ سفارش اخیر):</b>\n`;
+        gramOrders.slice(-5).reverse().forEach(([oid, o], idx) => {
+            msg += `${idx + 1}. <code>${oid}</code> | مقدار: ${o.count} | کاربر: <code>${o.userId}</code> | ${o.amount.toLocaleString()} تومان\n`;
+        });
+
+        msg += `\n<b>⭐️ فاکتورهای خرید استارز (۵ سفارش اخیر):</b>\n`;
+        starOrders.slice(-5).reverse().forEach(([oid, o], idx) => {
+            msg += `${idx + 1}. <code>${oid}</code> | مقدار: ${o.count} | کاربر: <code>${o.userId}</code> | ${o.amount.toLocaleString()} تومان\n`;
+        });
+
+        msg += `\n<b>🎁 فاکتورهای خرید گیفت (۵ سفارش اخیر):</b>\n`;
+        giftOrders.slice(-5).reverse().forEach(([oid, o], idx) => {
+            msg += `${idx + 1}. <code>${oid}</code> | گیفت: ${escapeHTML(o.giftName)} | کاربر: <code>${o.userId}</code> | ${o.amount.toLocaleString()} تومان\n`;
         });
 
         await safeSendMessage(chatId, msg, adminPanelMarkup);
@@ -2254,7 +2275,7 @@ bot.on('message', async (msg) => {
 
             await safeSendMessage(chatId, 
                 `<b>✅ کد تخفیف با موفقیت ساخته شد</b>\n\n` +
-                `🎫 کد تخفیف: ||${code}||\n` +
+                `🎫 کد تخفیف: <tg-spoiler>${code}</tg-spoiler>\n` +
                 `💯 مقدار تخفیف: ${t.percent}%\n` +
                 `⏳ انقضا: ${expiresAt ? formatTehranDate(expiresAt) : 'بدون انقضا'}\n` +
                 `👥 ظرفیت: ${capacity} نفر\n` +
@@ -3054,11 +3075,13 @@ bot.on('callback_query', async (query) => {
         saveDatabase();
 
         const successNotice = 
-            `<b>✅ رسید پرداخت شما تایید شد!</b>\n\n` +
-            `🔖 شناسه رسید: <code>${receiptId}</code>\n` +
-            `💰 مبلغ شارژ شده: <b>${amount.toLocaleString()} تومان</b>\n` +
-            `💳 موجودی جدید حساب شما: <b>${targetUser.wallet.toLocaleString()} تومان</b>\n` +
-            `⏰ تاریخ: ${getFormattedTime()}`;
+            `<b>✅ فاکتور تایید رسید و افزایش موجودی</b>\n\n` +
+            `کاربر گرامی، رسید پرداخت شما با موفقیت تایید شد.\n\n` +
+            `🔖 <b>شماره رسید:</b> <code>${receiptId}</code>\n` +
+            `💰 <b>مبلغ شارژ شده:</b> ${amount.toLocaleString()} تومان\n` +
+            `💳 <b>موجودی جدید کیف پول شما:</b> ${targetUser.wallet.toLocaleString()} تومان\n` +
+            `⏰ <b>تاریخ و زمان تایید:</b> ${getFormattedTime()}\n\n` +
+            `از اعتماد شما به نوا شاپ سپاسگزاریم!`;
 
         await safeSendMessage(targetUserId, successNotice);
         await safeSendMessage(chatId, `رسید کاربر <code>${targetUserId}</code> به مبلغ ${amount.toLocaleString()} تومان تایید شد و حساب کاربر شارژ گردید.`);
