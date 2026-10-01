@@ -859,7 +859,7 @@ function getReferralKeyboard() {
                 [B(REF_BTN.list, BTN_PRIMARY), B(REF_BTN.stats, BTN_PRIMARY)],
                 [B(REF_BTN.transfer, BTN_SUCCESS)],
                 [B(REF_BTN.top, BTN_PRIMARY), B(REF_BTN.guide, BTN_PRIMARY)],
-                [B('برگشت ↩️️', BTN_DANGER)]
+                [B('برگشت ↩', BTN_DANGER)]
             ],
             resize_keyboard: true
         }
@@ -953,7 +953,7 @@ async function sendReferralMenu(chatId, userData) {
     const lvl = getReferralLevel(stats.total);
 
     const menuMsg =
-        `🤝 <b>سیستم زیرمجموعه‌گیری نوا شاپ</b>\n\n` +
+        `🤝 <b>سیستم زیرمجموعه‌‌گیری نوا شاپ</b>\n\n` +
         `💎 دوستانت رو به نوا شاپ دعوت کن و از <b>هر خریدشون ${percent}% کمیسیون</b> بگیر!\n\n` +
         `🚀 بدون سقف درآمد ، مادام‌العمر و کاملاً خودکار\n` +
         `⚡ هر زیرمجموعه‌ای که با لینک اختصاصی تو وارد بشه ، برای همیشه به نام تو ثبت میشه.\n\n` +
@@ -1295,7 +1295,7 @@ function getAdminPanelKeyboard() {
                 [B('➕ افزایش موجودی کاربر', BTN_SUCCESS), B('➖ کاهش موجودی کاربر', BTN_DANGER)],
                 [B('🏆 تغییر سطح کاربر', BTN_PRIMARY), B('💳 تایید احراز هویت کاربر', BTN_SUCCESS)],
                 [B('🚫 بن کردن کاربر', BTN_DANGER), B('✅ آنبن کردن کاربر', BTN_SUCCESS)],
-                [B('🏷️ ساخت کد تخفیف', BTN_PRIMARY), B('👑 تنظیم مالک دوم', BTN_PRIMARY)],
+                [B('🏷️️ ساخت کد تخفیف', BTN_PRIMARY), B('👑 تنظیم مالک دوم', BTN_PRIMARY)],
                 [B(REF_BTN.adminDiscountList, BTN_PRIMARY)],
                 [B(REF_BTN.adminStats, BTN_PRIMARY), B(REF_BTN.adminPercent, BTN_PRIMARY)],
                 [B('💎 تنظیم قیمت دستی (تون)', BTN_PRIMARY), B('⭐ تنظیم قیمت دستی استارز', BTN_PRIMARY)],
@@ -1516,6 +1516,70 @@ bot.on('message', async (msg) => {
     const backKeyboard = getBackKeyboard();
     const accountKeyboard = getAccountKeyboard();
     const adminPanelMarkup = getAdminPanelKeyboard();
+
+    if (text === '/start') {
+        userData.currentShopState = null;
+        saveDatabase();
+        await safeSendMessage(chatId, `سلام ${escapeHTML(userData.firstName)} عزیز!\nبه ربات نوا شاپ خوش آمدید.`, mainKeyboard);
+        return;
+    }
+
+    if (text === '🛒 خرید محصول') {
+        userData.currentShopState = 'main_shop';
+        saveDatabase();
+        await safeSendMessage(chatId, 'وقته محصول رو انتخاب کنی !\n\n🚀 تمامی سفارشات با بالاترین سرعت انجام میشن !', getShopKeyboard());
+        return;
+    }
+
+    if (text === '💳 حساب کاربری') {
+        const accMsg = 
+            `<b>[ حساب کاربری شما ]</b>\n\n` +
+            `👤 نام: ${escapeHTML(userData.firstName)}\n` +
+            `🆔 شناسه کاربری: <code>${chatId}</code>\n` +
+            `🏆 سطح کاربری: ${userData.level}\n` +
+            `📱 شماره همراه: ${userData.phone}\n` +
+            `💳 موجودی حساب: <b>${userData.wallet.toLocaleString()} تومان</b>\n` +
+            `🎁 موجودی کیف تخفیف: ${userData.discountWallet.toLocaleString()} تومان`;
+        await safeSendMessage(chatId, accMsg, accountKeyboard);
+        return;
+    }
+
+    if (text === '➕ افزایش موجودی') {
+        userData.waitingForAmount = true;
+        saveDatabase();
+        await safeSendMessage(chatId, 'لطفاً مبلغ مورد نظر خود را به تومان جهت شارژ حساب وارد کنید:', backKeyboard);
+        return;
+    }
+
+    if (text === '📞 پشتیبانی') {
+        userData.waitingForTicket = true;
+        saveDatabase();
+        await safeSendMessage(chatId, 'لطفاً پیام یا سوال خود را برای مدیریت ارسال کنید:', backKeyboard);
+        return;
+    }
+
+    if (text === '📦 پیگیری سفارش') {
+        userData.waitingForTrackingInput = true;
+        saveDatabase();
+        await safeSendMessage(chatId, 'لطفاً کد پیگیری سفارش خود را ارسال کنید:', backKeyboard);
+        return;
+    }
+
+    if (text === '❤ چطوری میتوانم به شما اعتماد کنم') {
+        const trustMsg = 
+            `<b>چرا باید به نوا شاپ اعتماد کنید؟</b>\n\n` +
+            `✅ پردازش سریع و آنلاین تمامی سفارشات\n` +
+            `✅ تحویل در کوتاه‌ترین زمان ممکن\n` +
+            `✅ پشتیبانی فعال جهت پاسخگویی به مشکلات شما\n` +
+            `✅ شفافیت در گزارشات کانال رسمی فروشگاه (@nova1_shopp)`;
+        await safeSendMessage(chatId, trustMsg, mainKeyboard);
+        return;
+    }
+
+    if (isAdmin && (text === '🔧 پنل مدیریت' || text === '/admin')) {
+        await safeSendMessage(chatId, '<b>[ پنل مدیریت ربات ]</b>\n\nیکی از گزینه‌های زیر را انتخاب کنید:', adminPanelMarkup);
+        return;
+    }
 
     if (text === 'لغو خرید ❌' || text === '❌ لغو خرید') {
         userData.currentShopState = null;
