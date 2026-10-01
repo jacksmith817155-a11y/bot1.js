@@ -33,68 +33,34 @@ const TOKEN = process.env.BOT_TOKEN || '8696660217:AAEBI6iOD-OAZpWbCIGy2KU-s-Fc5
 const ADMIN_ID_USERNAME = '@shantiaNFT';
 const ADMIN_NUMERIC_ID = 8750484397; 
 const EXTRA_ADMIN_ID = '8942987641';
-// On Render: attach a Persistent Disk and set DB_PATH=/data/database.json so data survives deploys
 const DB_FILE = process.env.DB_PATH || path.join(__dirname, 'database.json');
 
 const FORCE_JOIN_CHANNELS = ['@nova2_shop', '@nova1_shopp'];
 const REPORT_CHANNEL = '@nova1_shopp';
-
-/**
- * Bot username (used to build referral links)
- */
 const BOT_USERNAME = 'NOVA_SHOP3_BOT';
 
-/**
- * Referral system defaults
- */
 const REFERRAL_DEFAULT_PERCENT = 5;
 const REFERRAL_MIN_TRANSFER = 1000;
-
-/**
- * Fixed USD Price for single Telegram Star unit.
- */
 const STAR_USD = 0.015;
 
-/**
- * Fallback prices
- */
 const FALLBACK_USDT_TOMAN = 65000; 
 const FALLBACK_GRAM_TOMAN = 311591; 
 
-/**
- * BrsApi (live USD / Toman rate) - https://brsapi.ir
- */
 const BRSAPI_KEY = process.env.BRSAPI_KEY || 'BrcH3cX7vcbuX9tE7Pr8dJGsjkeKKJTt';
 const BRSAPI_URL = `https://api.brsapi.ir/Market/Gold_Currency.php?key=${BRSAPI_KEY}`;
-const PRICE_REFRESH_MS = 2000; // قیمت‌ها هر ۲ ثانیه یک‌بار بروزرسانی می‌شوند
+const PRICE_REFRESH_MS = 2000;
 
-/**
- * Margins:
- * STAR_MARGIN = 1.0  -> قیمت استارز دقیقاً 0.015 دلار × نرخ دلار
- * GRAM_MARGIN = 1.10 -> سود ۱۰٪ روی گرام (مثل نسخه قبلی)
- */
 const STAR_MARGIN = 1.0;
 const GRAM_MARGIN = 1.10;
 
-/**
- * Payment info shown for balance top-up (set your own card!)
- */
 const CARD_NUMBER = process.env.CARD_NUMBER || '0000-0000-0000-0000';
 const CARD_OWNER = process.env.CARD_OWNER || 'نام صاحب کارت';
 const TOPUP_MIN = 10000;
 const TOPUP_MAX = 100000000;
 
 // ============================================================================
-// COLORED BUTTON HELPER (Telegram Bot API button styles)
+// COLORED BUTTON HELPER
 // ============================================================================
-/**
- * Telegram supports a "style" field on keyboard buttons and inline buttons:
- *   'primary' -> blue
- *   'success' -> green
- *   'danger'  -> red
- * If style is omitted, the button keeps the default Telegram color.
- * The text of the button is NOT changed, so all text-matching logic still works.
- */
 const BTN_PRIMARY = 'primary';
 const BTN_SUCCESS = 'success';
 const BTN_DANGER = 'danger';
@@ -156,7 +122,6 @@ process.on('unhandledRejection', (reason, promise) => {
     SystemLogger.error('Process', `Unhandled Rejection at: ${promise}`, new Error(String(reason)));
 });
 
-// Stop polling gracefully when Render replaces the instance (prevents 409 Conflict overlap)
 process.on('SIGTERM', async () => {
     try { await bot.stopPolling(); } catch (e) {}
     process.exit(0);
@@ -166,7 +131,6 @@ process.on('SIGINT', async () => {
     process.exit(0);
 });
 
-// 409 Conflict only means another instance is polling at the same moment; the library retries by itself.
 bot.on('polling_error', (err) => {
     SystemLogger.error('Polling', `${err && err.code ? err.code : 'ERR'} - ${err && err.message ? err.message : err}`);
 });
@@ -183,9 +147,9 @@ let db = {
     secondaryAdmin: null,
     manualTonPrice: 0, 
     manualStarPrice: 0,
-    manualGiftBasePrice: 0, // قیمت دستی پایه برای گیفت 15 استارزی
-    referralPercent: REFERRAL_DEFAULT_PERCENT, // درصد کمیسیون زیرمجموعه‌گیری
-    lastUsdToman: 0 // آخرین نرخ دلار معتبر (برای بعد از ری‌استارت)
+    manualGiftBasePrice: 0,
+    referralPercent: REFERRAL_DEFAULT_PERCENT,
+    lastUsdToman: 0
 };
 
 function loadDatabase() {
@@ -299,7 +263,6 @@ function getUserDataById(userId) {
             waitingForDiscountExpiry: false,
             waitingForDiscountRestriction: false,
 
-            // ---------------- REFERRAL SYSTEM FIELDS ----------------
             referredBy: null,
             referrals: [],
             referralBalance: 0,
@@ -312,7 +275,6 @@ function getUserDataById(userId) {
         saveDatabase();
     }
 
-    // Backward-compatibility normalisation for users stored before V4.0
     const u = db.users[userId];
     if (typeof u.referredBy === 'undefined') u.referredBy = null;
     if (!Array.isArray(u.referrals)) u.referrals = [];
@@ -483,17 +445,13 @@ async function sendChannelReport(order) {
 }
 
 // ============================================================================
-// GENERIC TEXT HELPERS (digits normalisation, emoji variation selector strip...)
+// GENERIC TEXT HELPERS
 // ============================================================================
 
 function stripVS(str) {
     return str ? str.toString().replace(/\uFE0F/g, '') : str;
 }
 
-/**
- * Compares a user's text with a button label while ignoring emoji variation selectors
- * (this prevents invisible-character mismatches between keyboards and handlers).
- */
 function textIs(text, label) {
     return !!text && stripVS(text) === stripVS(label);
 }
@@ -552,7 +510,7 @@ const REF_BTN = {
 };
 
 // ============================================================================
-// PRODUCT CATALOG (used for discount code restrictions)
+// PRODUCT CATALOG
 // ============================================================================
 
 const GIFT_PRODUCTS = [
@@ -587,17 +545,11 @@ function getGiftKeyFromName(name) {
     return found ? found.key : 'gift_other';
 }
 
-/**
- * Extracts the number of stars from a gift label like "💖 گیفت قلب ( 15 )".
- */
 function getGiftStarsFromName(name) {
     const m = (name || '').toString().match(/\(\s*(\d+)\s*\)/);
     return m ? parseInt(m[1]) : 0;
 }
 
-/**
- * Maps the user's current shop state to the product key used by the discount engine.
- */
 function getCurrentProductKey(userData) {
     if (userData.currentShopState === 'star_invoice') return 'stars';
     if (userData.currentShopState === 'gram_invoice') return 'gram';
@@ -658,9 +610,6 @@ function getDiscountCapacityKeyboard() {
     };
 }
 
-/**
- * Builds the inline multi-select keyboard of products for discount restriction.
- */
 function buildDiscountProductsMarkup(selectedKeys) {
     const selected = Array.isArray(selectedKeys) ? selectedKeys : [];
     const rows = [];
@@ -695,10 +644,6 @@ function findDiscountCodeKey(input) {
     return Object.keys(db.discountCodes).find(k => k.toUpperCase() === clean) || null;
 }
 
-/**
- * Checks whether a discount code can be applied to a given product key.
- * Supports both the new "products" array and the legacy "restriction" string.
- */
 function isDiscountApplicable(codeObj, productKey) {
     if (!codeObj) return false;
     if (Array.isArray(codeObj.products) && codeObj.products.length > 0) {
@@ -754,10 +699,6 @@ function clearAppliedDiscount(userData) {
     userData.appliedDiscountPercent = 0;
 }
 
-/**
- * Calculates the discount for the current invoice. If the applied code is no longer
- * valid for this product, it is removed automatically and a note is returned.
- */
 function calculateDiscount(userData, productKey, totalPrice, userId) {
     const empty = { code: null, percent: 0, discountVal: 0, finalAmount: totalPrice, note: '' };
     if (!userData.appliedDiscountCode) return empty;
@@ -780,9 +721,6 @@ function calculateDiscount(userData, productKey, totalPrice, userId) {
     };
 }
 
-/**
- * Builds the strike-through price block shown inside invoices.
- */
 function buildDiscountBlock(totalPrice, d) {
     let block = '';
     if (d.note) block += `${escapeHTML(d.note)}\n\n`;
@@ -809,10 +747,6 @@ function consumeDiscountUsage(userData, userId) {
     saveDatabase();
 }
 
-/**
- * Re-validates the applied code right before the order is confirmed.
- * Returns true if the purchase can continue, false if the invoice was re-shown.
- */
 async function revalidateAppliedDiscount(chatId, userData, productKey, reshowFn) {
     if (!userData.appliedDiscountCode) return true;
     const chk = validateDiscountCode(userData.appliedDiscountCode, chatId, productKey);
@@ -920,10 +854,6 @@ function getReferralKeyboard() {
     };
 }
 
-/**
- * Registers a new user as a sub-member of the referrer when they arrive with /start ref_ID.
- * Only brand-new users (never seen by the bot before) are registered.
- */
 async function handleReferralStart(msg, userData, wasKnownUser) {
     try {
         const text = msg.text || '';
@@ -963,9 +893,6 @@ async function handleReferralStart(msg, userData, wasKnownUser) {
     }
 }
 
-/**
- * Pays the referral commission to the referrer once an order is completed.
- */
 async function payReferralCommission(order) {
     try {
         if (!order || order.commissionPaid) return;
@@ -1087,7 +1014,7 @@ async function sendReferralStats(chatId, userData) {
     }
 
     const statsMsg =
-        `💰 <b>درآمد و آمار زیرمجموعه‌گیری</b>\n\n` +
+        `💰 <b>درآمد و آمار زیرمجموعه‌‌گیری</b>\n\n` +
         `${lvl.current.emoji} سطح شما: <b>${lvl.current.name}</b>\n` +
         `${progressText}\n\n` +
         `👥 تعداد زیرمجموعه‌ها: <b>${stats.total}</b>\n` +
@@ -1168,7 +1095,7 @@ async function handleReferralTransfer(chatId, userData) {
 }
 
 // ============================================================================
-// CHECK MEMBERSHIP FUNCTION (FORCE JOIN)
+// CHECK MEMBERSHIP FUNCTION
 // ============================================================================
 async function checkMembership(userId) {
     try {
@@ -1187,23 +1114,18 @@ async function checkMembership(userId) {
 
 // ============================================================================
 // FINANCIAL API INTEGRATIONS (BRSAPI + WALLEX + BINANCE LIVE API)
-// All prices live in an in-memory cache which is refreshed every 2 seconds,
-// so user requests never wait on a network call.
 // ============================================================================
 
 const priceCache = {
-    usdToman: 0,        // نرخ دلار به تومان
+    usdToman: 0,
     usdSource: 'none',
-    tonToman: 0,        // قیمت تون به تومان
+    tonToman: 0,
     tonUsdt: 0,
     updatedAt: 0
 };
 let priceUpdating = false;
 let lastUsdPersistAt = 0;
 
-/**
- * Generic JSON GET (https/http) with timeout. Resolves null on any failure.
- */
 function httpGetJson(urlStr, headers = {}, timeoutMs = 6000) {
     return new Promise((resolve) => {
         try {
@@ -1226,11 +1148,6 @@ function httpGetJson(urlStr, headers = {}, timeoutMs = 6000) {
     });
 }
 
-/**
- * BrsApi returns lists of items shaped like:
- * { date, time, time_unix, symbol, name_en, name, price, change_value, change_percent, unit }
- * The response may group them (gold / currency / cryptocurrency), so we flatten everything.
- */
 function collectBrsItems(node, out = []) {
     if (Array.isArray(node)) {
         node.forEach(n => collectBrsItems(n, out));
@@ -1250,7 +1167,7 @@ function brsItemToToman(item, usdToman) {
     const unit = String(item.unit || '');
     if (unit.includes('ریال')) return raw / 10;
     if (unit.includes('دلار') || /usd|\$/i.test(unit)) return raw * (usdToman || 0);
-    return raw; // تومان
+    return raw;
 }
 
 function findBrsUsd(items) {
@@ -1303,11 +1220,6 @@ async function getWallexUsdtPriceInToman() {
     });
 }
 
-/**
- * Pulls fresh prices (called every PRICE_REFRESH_MS).
- * USD/Toman : BrsApi  ->  Wallex USDT (fallback)  ->  last known value
- * TON/USDT  : Binance ->  BrsApi TON (fallback)   ->  last known value
- */
 async function updatePrices() {
     if (priceUpdating) return;
     priceUpdating = true;
@@ -1319,7 +1231,6 @@ async function updatePrices() {
 
         const items = brsData ? collectBrsItems(brsData) : [];
 
-        // ---- USD / TOMAN ----
         let usd = 0;
         const usdItem = findBrsUsd(items);
         if (usdItem) {
@@ -1340,7 +1251,6 @@ async function updatePrices() {
             }
         }
 
-        // ---- TON ----
         const usdNow = getUsdToman();
         let tonToman = 0;
         if (binanceData && binanceData.price) {
@@ -1358,7 +1268,6 @@ async function updatePrices() {
 
         priceCache.updatedAt = Date.now();
 
-        // persist last good USD rate (at most once a minute)
         if (priceCache.usdToman > 0 && Date.now() - lastUsdPersistAt > 60000) {
             lastUsdPersistAt = Date.now();
             if (db.lastUsdToman !== priceCache.usdToman) {
@@ -1386,9 +1295,6 @@ async function getBinanceTONPriceInToman() {
     return FALLBACK_GRAM_TOMAN;
 }
 
-/**
- * Star unit price = 0.015 USD × live USD/Toman rate (× STAR_MARGIN).
- */
 async function fetchStarsPrice() {
     if (db.manualStarPrice && db.manualStarPrice > 0) {
         return db.manualStarPrice;
@@ -1396,9 +1302,6 @@ async function fetchStarsPrice() {
     return Math.round(STAR_USD * getUsdToman() * STAR_MARGIN);
 }
 
-/**
- * Gift price = number of stars × star unit price (or manual 15-star base price).
- */
 async function computeGiftTotal(stars) {
     if (db.manualGiftBasePrice && db.manualGiftBasePrice > 0) {
         return Math.round((db.manualGiftBasePrice / 15) * stars);
@@ -1419,7 +1322,6 @@ async function fetchGramData() {
     return { gramUsd: (rawBinanceBase / usdtToman).toFixed(2), finalPrice, usdtToman: rawBinanceBase };
 }
 
-// start the live refresher (every 2 seconds)
 updatePrices();
 setInterval(updatePrices, PRICE_REFRESH_MS);
 
@@ -1433,7 +1335,7 @@ function getMainKeyboard(isAdmin) {
         [B(REF_BTN.menu, BTN_SUCCESS)],
         [B('➕ افزایش موجودی', BTN_PRIMARY), B('💳 حساب کاربری', BTN_PRIMARY)],
         [B('📞 پشتیبانی', BTN_PRIMARY), B('📦 پیگیری سفارش', BTN_PRIMARY)],
-        [B('❤️️ چطوری میتوانم به شما اعتماد کنم', BTN_DANGER)]
+        [B('❤ چطوری میتوانم به شما اعتماد کنم', BTN_DANGER)]
     ];
     if (isAdmin) {
         rows.push([B('🔧 پنل مدیریت', BTN_DANGER)]);
@@ -1497,7 +1399,7 @@ function getAdminPanelKeyboard() {
 }
 
 // ============================================================================
-// SHOP MENU SENDERS (reused by buttons and by the back handler)
+// SHOP MENU SENDERS
 // ============================================================================
 
 async function sendStarMenu(chatId, userData) {
@@ -1643,7 +1545,6 @@ async function showStarInvoice(chatId, userData) {
 }
 
 async function showGiftInvoice(chatId, userData) {
-    // قیمت گیفت = تعداد استارز گیفت × قیمت لحظه‌ای هر استارز (یا قیمت دستی پایه)
     const totalPrice = await computeGiftTotal(userData.selectedGiftStars);
     
     const giftKey = getGiftKeyFromName(userData.selectedGiftName);
@@ -1734,9 +1635,6 @@ async function showGramInvoice(chatId, userData) {
     }
 }
 
-/**
- * Re-prices the invoice right before confirmation so the user always pays the live price.
- */
 async function refreshInvoiceAmounts(chatId, userData, kind) {
     let raw = 0;
     let productKey = 'stars';
@@ -1772,14 +1670,12 @@ bot.on('message', async (msg) => {
         await setReaction(chatId, msg.message_id);
     }
 
-    // Must be evaluated BEFORE the user record is created (used for referral registration)
     const wasKnownUser = !!db.users[chatId];
 
     const adminData = getUserDataById(chatId);
     const isAdmin = isUserAdmin(chatId);
     const userData = getUserData(msg);
 
-    // Register referral (only for brand-new users arriving through /start ref_ID)
     if (text && text.startsWith('/start')) {
         await handleReferralStart(msg, userData, wasKnownUser);
     }
@@ -1809,9 +1705,6 @@ bot.on('message', async (msg) => {
     const accountKeyboard = getAccountKeyboard();
     const adminPanelMarkup = getAdminPanelKeyboard();
 
-    // ------------------------------------------------------------------------
-    // /start  (welcome message)
-    // ------------------------------------------------------------------------
     if (text && /^\/start(?:@\w+)?(\s|$)/.test(text)) {
         userData.currentShopState = null;
         userData.waitingForAmount = false;
@@ -1909,15 +1802,10 @@ bot.on('message', async (msg) => {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // MAIN-MENU BUTTON INTERRUPT:
-    // pressing a main-menu button while the bot is waiting for some input
-    // cancels that pending input (so the user never gets "stuck").
-    // ------------------------------------------------------------------------
     const MENU_INTERRUPTS = [
         '🛒 خرید محصول', REF_BTN.menu, '➕ افزایش موجودی', '💳 حساب کاربری',
         '📞 پشتیبانی', '📦 پیگیری سفارش', '🔧 پنل مدیریت', '/admin',
-        '❤️️ چطوری میتوانم به شما اعتماد کنم'
+        '❤ چطوری میتوانم به شما اعتماد کنم'
     ];
     if (text && MENU_INTERRUPTS.some(l => textIs(text, l))) {
         userData.waitingForAmount = false;
@@ -1949,6 +1837,189 @@ bot.on('message', async (msg) => {
             adminData.waitingForReferralPercent = false;
         }
         saveDatabase();
+    }
+
+    // MAIN NAVIGATION COMMAND HANDLERS
+    if (textIs(text, '🛒 خرید محصول')) {
+        userData.currentShopState = 'main_shop';
+        saveDatabase();
+        await safeSendMessage(chatId, 'وقته محصول رو انتخاب کنی !\n\n🚀 تمامی سفارشات با بالاترین سرعت انجام میشن !', getShopKeyboard());
+        return;
+    }
+
+    if (textIs(text, '⭐️ استارز')) {
+        await sendStarMenu(chatId, userData);
+        return;
+    }
+
+    if (textIs(text, '🎁 گیفت استارزی')) {
+        await sendGiftMenu(chatId, userData);
+        return;
+    }
+
+    if (textIs(text, '💠 خرید ارز گرام ( GRAM )')) {
+        await sendGramMenu(chatId, userData);
+        return;
+    }
+
+    if (textIs(text, '➕ افزایش موجودی')) {
+        userData.waitingForAmount = true;
+        saveDatabase();
+        await safeSendMessage(chatId, `لطفاً مبلغ مورد نظر برای افزایش موجودی را به تومان وارد کنید (حداقل ${TOPUP_MIN.toLocaleString()} تومان):`, backKeyboard);
+        return;
+    }
+
+    if (textIs(text, '💳 حساب کاربری')) {
+        const accountInfo = 
+            `<b>[ حساب کاربری شما ]</b>\n\n` +
+            `👤 نام: ${escapeHTML(userData.firstName)}\n` +
+            `🆔 آیدی عددی: <code>${chatId}</code>\n` +
+            `💰 موجودی کیف پول: <b>${userData.wallet.toLocaleString()} تومان</b>\n` +
+            `🎁 موجودی تخفیف: ${userData.discountWallet.toLocaleString()} تومان\n` +
+            `🏆 سطح کاربری: ${userData.level}\n` +
+            `📱 شماره همراه: ${userData.phone}\n` +
+            `💳 وضعیت کارت: ${userData.cardVerified ? 'تایید شده ✅' : 'تایید نشده ❌'}`;
+        await safeSendMessage(chatId, accountInfo, accountKeyboard);
+        return;
+    }
+
+    if (textIs(text, '📞 پشتیبانی')) {
+        userData.waitingForTicket = true;
+        saveDatabase();
+        await safeSendMessage(chatId, 'لطفاً پیام یا سوال خود را ارسال کنید تا در اسرع وقت پاسخ داده شود:', backKeyboard);
+        return;
+    }
+
+    if (textIs(text, '📦 پیگیری سفارش')) {
+        userData.waitingForTrackingInput = true;
+        saveDatabase();
+        await safeSendMessage(chatId, 'لطفاً کد پیگیری سفارش خود را ارسال کنید:', backKeyboard);
+        return;
+    }
+
+    if (textIs(text, '❤ چطوری میتوانم به شما اعتماد کنم')) {
+        const trustMsg = 
+            `<b>چرا می‌توان به نوا شاپ اعتماد کرد؟</b>\n\n` +
+            `✨ پردازش خودکار و سریع سفارش‌ها\n` +
+            `🛡 تحویل دقیق محصولات طبق فاکتور رسمی\n` +
+            `📞 پشتیبانی ۲۴ ساعته پاسخگو\n` +
+            `📢 ارسال گزارش لحظه‌ای خریدهای موفق در کانال گزارشات: @nova1_shopp`;
+        await safeSendMessage(chatId, trustMsg, mainKeyboard);
+        return;
+    }
+
+    if (textIs(text, REF_BTN.menu)) {
+        await sendReferralMenu(chatId, userData);
+        return;
+    }
+
+    if (textIs(text, REF_BTN.link)) {
+        await sendReferralLink(chatId, userData);
+        return;
+    }
+
+    if (textIs(text, REF_BTN.list)) {
+        await sendReferralList(chatId, userData);
+        return;
+    }
+
+    if (textIs(text, REF_BTN.stats)) {
+        await sendReferralStats(chatId, userData);
+        return;
+    }
+
+    if (textIs(text, REF_BTN.top)) {
+        await sendReferralLeaderboard(chatId);
+        return;
+    }
+
+    if (textIs(text, REF_BTN.guide)) {
+        await sendReferralGuide(chatId);
+        return;
+    }
+
+    if (textIs(text, REF_BTN.transfer)) {
+        await handleReferralTransfer(chatId, userData);
+        return;
+    }
+
+    if (isAdmin && (text === '🔧 پنل مدیریت' || text === '/admin')) {
+        await safeSendMessage(chatId, 'به پنل مدیریت خوش آمدید. گزینه مورد نظر را انتخاب کنید:', adminPanelMarkup);
+        return;
+    }
+
+    if (isAdmin && textIs(text, '🏷️ ساخت کد تخفیف')) {
+        adminData.tempDiscount = { percent: 0, capacity: 0, expiryHour: 0, restriction: null, durationHours: 0, products: [] };
+        adminData.waitingForDiscountExpiry = true;
+        saveDatabase();
+        await safeSendMessage(
+            chatId,
+            `🎯 <b>ساخت کد تخفیف جدید</b>\n\n` +
+            `⏱ <b>مرحله ۱ از ۴ — مدت زمان اعتبار کد</b>\n` +
+            `مدت زمان اعتبار این کد تخفیف را انتخاب کنید:`,
+            getDiscountDurationKeyboard()
+        );
+        return;
+    }
+
+    if (isAdmin && textIs(text, REF_BTN.adminDiscountList)) {
+        const res = renderDiscountList();
+        await safeSendMessage(chatId, res.text, { reply_markup: res.markup });
+        return;
+    }
+
+    if (isAdmin && textIs(text, REF_BTN.adminPercent)) {
+        adminData.waitingForReferralPercent = true;
+        saveDatabase();
+        await safeSendMessage(chatId, `درصد فعلی کمیسیون زیرمجموعه‌گیری: <b>${getReferralPercent()}%</b>\n\nلطفاً درصد جدید را به‌صورت عدد (مثلاً 5 یا 10) بفرستید:`, backKeyboard);
+        return;
+    }
+
+    if (isAdmin && textIs(text, REF_BTN.adminStats)) {
+        const board = getReferralBoard();
+        let totalCommissions = 0;
+        Object.values(db.orders).forEach(o => {
+            if (o.status === 'completed' && o.commissionAmount) totalCommissions += o.commissionAmount;
+        });
+        const statsMsg = 
+            `<b>[ آمار کلی زیرمجموعه‌گیری ]</b>\n\n` +
+            `💎 درصد کمیسیون فعلی: <b>${getReferralPercent()}%</b>\n` +
+            `👥 تعداد کل افراد بازاریاب: <b>${board.length}</b>\n` +
+            `💰 مجموع کمیسیون‌های پرداخت‌شده: <b>${totalCommissions.toLocaleString()} تومان</b>`;
+        await safeSendMessage(chatId, statsMsg, adminPanelMarkup);
+        return;
+    }
+
+    if (isAdmin && textIs(text, '💎 تنظیم قیمت دستی (تون)')) {
+        adminData.waitingForManualPrice = true;
+        saveDatabase();
+        const cur = db.manualTonPrice > 0 ? `${db.manualTonPrice.toLocaleString()} تومان` : 'آنلاین (بایننس)';
+        await safeSendMessage(chatId, `وضعیت فعلی قیمت تون: <b>${cur}</b>\n\nبرای تنظیم قیمت دستی مبلغ را به تومان وارد کنید (ارسال عدد 0 جهت بازگشت به حالت آنلاین):`, backKeyboard);
+        return;
+    }
+
+    if (isAdmin && textIs(text, '⭐ تنظیم قیمت دستی استارز')) {
+        adminData.waitingForManualStarPrice = true;
+        saveDatabase();
+        const cur = db.manualStarPrice > 0 ? `${db.manualStarPrice.toLocaleString()} تومان` : 'خودکار (بر اساس نرخ دلار)';
+        await safeSendMessage(chatId, `وضعیت فعلی قیمت استارز: <b>${cur}</b>\n\nمبلغ هر واحد استارز به تومان را وارد کنید (ارسال عدد 0 جهت بازگشت به حالت خودکار):`, backKeyboard);
+        return;
+    }
+
+    if (isAdmin && textIs(text, '🎁 تنظیم قیمت دستی گیفت استارزی')) {
+        adminData.waitingForManualGiftBasePrice = true;
+        saveDatabase();
+        const cur = db.manualGiftBasePrice > 0 ? `${db.manualGiftBasePrice.toLocaleString()} تومان` : 'خودکار';
+        await safeSendMessage(chatId, `وضعیت فعلی پایه قیمت گیفت 15 استارزی: <b>${cur}</b>\n\nمبلغ پایه گیفت 15 استارزی را وارد کنید (ارسال عدد 0 جهت بازگشت به حالت خودکار):`, backKeyboard);
+        return;
+    }
+
+    if (isAdmin && ['➕ افزایش موجودی کاربر', '➖ کاهش موجودی کاربر', '🏆 تغییر سطح کاربر', '💳 تایید احراز هویت کاربر', '🚫 بن کردن کاربر', '✅ آنبن کردن کاربر', '👑 تنظیم مالک دوم'].includes(text)) {
+        adminData.adminAction = text;
+        adminData.waitingForAdminUserSearch = true;
+        saveDatabase();
+        await safeSendMessage(chatId, `لطفاً آیدی عددی کاربر مورد نظر را بفرستید:`, backKeyboard);
+        return;
     }
 
     if (isAdmin && adminData.waitingForManualPrice && text) {
@@ -2039,7 +2110,6 @@ bot.on('message', async (msg) => {
 
         const order = db.orders[orderCode];
         if (order) {
-            // Refund the wallet only if the order was still pending (prevents double refund)
             let refundNote = '';
             if (order.status === 'pending') {
                 const buyer = getUserDataById(order.userId);
@@ -2066,10 +2136,6 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // ========================================================================
-    // ADVANCED DISCOUNT CODE CREATION WIZARD (ADMIN)
-    // Step 1: Duration -> Step 2: Percent -> Step 3: Products (inline) -> Step 4: Capacity
-    // ========================================================================
     if (isAdmin) {
         if (adminData.waitingForDiscountExpiry && text) {
             let hours = null;
@@ -2286,7 +2352,7 @@ bot.on('message', async (msg) => {
             reply_markup: {
                 keyboard: [
                     [B(`برای خودم ( ${selfName} ) 🪪`, BTN_SUCCESS)],
-                    [B('برگشت ↩️️', BTN_DANGER)]
+                    [B('برگشت ↩', BTN_DANGER)]
                 ],
                 resize_keyboard: true
             }
@@ -2317,9 +2383,6 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // ------------------------------------------------------------------------
-    // GIFT FLOW: choose gift -> recipient -> invoice
-    // ------------------------------------------------------------------------
     if (userData.currentShopState === 'gift_menu' && text) {
         const chosen = GIFT_PRODUCTS.find(g => textIs(text, g.name));
         if (chosen) {
@@ -2502,9 +2565,6 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // ------------------------------------------------------------------------
-    // BALANCE TOP-UP: amount input
-    // ------------------------------------------------------------------------
     if (userData.waitingForAmount && text) {
         const amountInput = parseInt(normalizeDigits(text));
         if (isNaN(amountInput) || amountInput < TOPUP_MIN || amountInput > TOPUP_MAX) {
@@ -2542,7 +2602,6 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // Discount code button on gift / gram invoices
     if (text === '💳 اعمال کد تخفیف' && (userData.currentShopState === 'gift_invoice' || userData.currentShopState === 'gram_invoice')) {
         userData.waitingForDiscountInput = true;
         saveDatabase();
@@ -2550,7 +2609,6 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // Comment button on gift invoice
     if (text === '💬 تنظیم کامنت' && userData.currentShopState === 'gift_invoice') {
         userData.waitingForComment = true;
         saveDatabase();
@@ -2558,9 +2616,6 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // ------------------------------------------------------------------------
-    // REMOVE APPLIED DISCOUNT CODE FROM INVOICE
-    // ------------------------------------------------------------------------
     if (textIs(text, REF_BTN.removeDiscount)) {
         if (userData.appliedDiscountCode && getCurrentProductKey(userData)) {
             clearAppliedDiscount(userData);
@@ -2844,3 +2899,167 @@ bot.on('message', async (msg) => {
         await notifyAdmins(adminTicketMsg, replyMarkup);
         return;
     }
+});
+
+// ============================================================================
+// CALLBACK QUERY HANDLER ENGINE
+// ============================================================================
+
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const data = query.data;
+    const adminData = getUserDataById(chatId);
+    const isAdmin = isUserAdmin(chatId);
+    const userData = getUserDataById(chatId);
+
+    try {
+        await bot.answerCallbackQuery(query.id);
+    } catch (e) {}
+
+    if (data === 'check_join') {
+        const isMember = await checkMembership(query.from.id);
+        if (isMember) {
+            await safeSendMessage(chatId, '✅ عضویت شما تایید شد! حالا می‌توانید از خدمات ربات استفاده کنید.', getMainKeyboard(isAdmin));
+        } else {
+            await safeSendMessage(chatId, '❌ شما هنوز در تمامی کانال‌ها عضو نشده‌اید. لطفاً در همه کانال‌ها عضو شوید و مجدداً دکمه تایید را بزنید.');
+        }
+        return;
+    }
+
+    if (data.startsWith('add_balance_')) {
+        const amountStr = data.replace('add_balance_', '');
+        const amount = parseInt(amountStr);
+        if (!isNaN(amount) && amount > 0) {
+            userData.topupAmount = amount;
+            userData.waitingForReceipt = true;
+            saveDatabase();
+            await sendTopupInstructions(chatId, amount);
+        }
+        return;
+    }
+
+    if (data.startsWith('order_done_') && isAdmin) {
+        const orderCode = data.replace('order_done_', '');
+        const order = db.orders[orderCode];
+        if (order) {
+            order.status = 'completed';
+            saveDatabase();
+
+            await payReferralCommission(order);
+            await sendChannelReport(order);
+
+            await safeSendMessage(order.userId, `✅ سفارش شما با کد پیگیری <code>${orderCode}</code> با موفقیت انجام و تکمیل شد.`);
+            await safeSendMessage(chatId, `سفارش <code>${orderCode}</code> به عنوان انجام شده علامت‌گذاری شد.`);
+        }
+        return;
+    }
+
+    if (data.startsWith('order_reject_') && isAdmin) {
+        const orderCode = data.replace('order_reject_', '');
+        adminData.waitingForOrderRejectReason = true;
+        adminData.rejectOrderCode = orderCode;
+        saveDatabase();
+        await safeSendMessage(chatId, `لطفاً علت رد سفارش <code>${orderCode}</code> را ارسال کنید:`, getBackKeyboard());
+        return;
+    }
+
+    if (data.startsWith('approve_receipt_') && isAdmin) {
+        const parts = data.split('_');
+        const targetUserId = parts[2];
+        const amount = parseInt(parts[3]);
+        const receiptId = parts[4];
+
+        const targetUser = getUserDataById(targetUserId);
+        targetUser.wallet += amount;
+        if (db.receipts[receiptId]) db.receipts[receiptId].status = 'approved';
+        saveDatabase();
+
+        await safeSendMessage(targetUserId, `✅ رسید شما به مبلغ ${amount.toLocaleString()} تومان تایید شد و موجودی حساب شما افزایش یافت.`);
+        await safeSendMessage(chatId, `رسید کاربر <code>${targetUserId}</code> به مبلغ ${amount.toLocaleString()} تومان تایید شد.`);
+        return;
+    }
+
+    if (data.startsWith('reject_receipt_') && isAdmin) {
+        const parts = data.split('_');
+        const targetUserId = parts[2];
+        const receiptId = parts[3];
+
+        if (db.receipts[receiptId]) db.receipts[receiptId].status = 'rejected';
+        adminData.waitingForReceiptRejectReason = true;
+        adminData.rejectTargetId = targetUserId;
+        saveDatabase();
+
+        await safeSendMessage(chatId, `لطفاً علت رد رسید کاربر <code>${targetUserId}</code> را ارسال کنید:`, getBackKeyboard());
+        return;
+    }
+
+    if (data.startsWith('reply_') && isAdmin) {
+        const targetUserId = data.replace('reply_', '');
+        adminData.adminReplyingTo = targetUserId;
+        saveDatabase();
+        await safeSendMessage(chatId, `لطفاً پاسخ خود را برای کاربر <code>${targetUserId}</code> ارسال کنید:`, getBackKeyboard());
+        return;
+    }
+
+    if (data.startsWith('dc_del_') && isAdmin) {
+        const code = data.replace('dc_del_', '');
+        if (db.discountCodes[code]) {
+            delete db.discountCodes[code];
+            saveDatabase();
+            await safeSendMessage(chatId, `🗑 کد تخفیف <code>${code}</code> با موفقیت حذف شد.`);
+            const res = renderDiscountList();
+            try {
+                await bot.editMessageText(res.text, { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'HTML', reply_markup: res.markup });
+            } catch (e) {}
+        }
+        return;
+    }
+
+    if (data.startsWith('dcp_') && isAdmin) {
+        const action = data.replace('dcp_', '');
+        let selected = Array.isArray(adminData.tempDiscount.products) ? adminData.tempDiscount.products : [];
+
+        if (action === 'all') {
+            selected = [];
+        } else if (action === 'allgifts') {
+            const allGiftKeys = GIFT_PRODUCTS.map(g => g.key);
+            const hasAll = allGiftKeys.every(k => selected.includes(k));
+            if (hasAll) {
+                selected = selected.filter(k => !allGiftKeys.includes(k));
+            } else {
+                allGiftKeys.forEach(k => { if (!selected.includes(k)) selected.push(k); });
+            }
+        } else if (action === 'done') {
+            adminData.waitingForDiscountRestriction = false;
+            adminData.waitingForDiscountCapacity = true;
+            saveDatabase();
+
+            const desc = selected.length > 0 ? selected.map(getProductLabel).join('، ') : '🌐 همه محصولات';
+            await safeSendMessage(
+                chatId,
+                `✅ محصولات انتخاب شده:\n<b>${escapeHTML(desc)}</b>\n\n` +
+                `👥 <b>مرحله ۴ از ۴ — ظرفیت کد (تعداد استفاده)</b>\n` +
+                `یکی از دکمه‌ها را انتخاب کنید یا ظرفیت را به عدد بفرستید:`,
+                getDiscountCapacityKeyboard()
+            );
+            return;
+        } else {
+            if (selected.includes(action)) {
+                selected = selected.filter(k => k !== action);
+            } else {
+                selected.push(action);
+            }
+        }
+
+        adminData.tempDiscount.products = selected;
+        saveDatabase();
+
+        try {
+            await bot.editMessageReplyMarkup(buildDiscountProductsMarkup(selected), {
+                chat_id: chatId,
+                message_id: query.message.message_id
+            });
+        } catch (e) {}
+        return;
+    }
+});
