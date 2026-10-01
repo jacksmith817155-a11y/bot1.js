@@ -859,7 +859,7 @@ function getReferralKeyboard() {
                 [B(REF_BTN.list, BTN_PRIMARY), B(REF_BTN.stats, BTN_PRIMARY)],
                 [B(REF_BTN.transfer, BTN_SUCCESS)],
                 [B(REF_BTN.top, BTN_PRIMARY), B(REF_BTN.guide, BTN_PRIMARY)],
-                [B('برگشت ↩️', BTN_DANGER)]
+                [B('برگشت ↩️️', BTN_DANGER)]
             ],
             resize_keyboard: true
         }
@@ -1033,7 +1033,7 @@ async function sendReferralStats(chatId, userData) {
     }
 
     const statsMsg =
-        `💰 <b>درآمد و آمار زیرمجموعه‌گیری</b>\n\n` +
+        `💰 <b>درآمد و آمار زیرمجموعه‌‌گیری</b>\n\n` +
         `${lvl.current.emoji} سطح شما: <b>${lvl.current.name}</b>\n` +
         `${progressText}\n\n` +
         `👥 تعداد زیرمجموعه‌ها: <b>${stats.total}</b>\n` +
@@ -1244,7 +1244,7 @@ function getMainKeyboard(isAdmin) {
         [B(REF_BTN.menu, BTN_SUCCESS)],
         [B('➕ افزایش موجودی', BTN_PRIMARY), B('💳 حساب کاربری', BTN_PRIMARY)],
         [B('📞 پشتیبانی', BTN_PRIMARY), B('📦 پیگیری سفارش', BTN_PRIMARY)],
-        [B('❤️️ چطوری میتوانم به شما اعتماد کنم', BTN_DANGER)]
+        [B('❤ چطوری میتوانم به شما اعتماد کنم', BTN_DANGER)]
     ];
     if (isAdmin) {
         rows.push([B('🔧 پنل مدیریت', BTN_DANGER)]);
@@ -1940,7 +1940,7 @@ bot.on('message', async (msg) => {
             reply_markup: {
                 keyboard: [
                     [B(`برای خودم ( ${selfName} ) 🪪`, BTN_SUCCESS)],
-                    [B('برگشت ↩️️', BTN_DANGER)]
+                    [B('برگشت ↩', BTN_DANGER)]
                 ],
                 resize_keyboard: true
             }
@@ -2466,4 +2466,15 @@ bot.on('message', async (msg) => {
             `👥 تعداد دعوت‌کننده‌های فعال: ${refUsers.length}\n` +
             `👤 مجموع زیرمجموعه‌ها: ${totalReferred}\n` +
             `📊 مجموع فروش زیرمجموعه‌ها: ${totalSales.toLocaleString()} تومان\n` +
-            `💰 مجموع کمیسیون پرداخت‌شده: ${totalPaid.toLocaleString
+            `💰 مجموع کمیسیون پرداخت‌شده: ${totalPaid.toLocaleString()} تومان\n` +
+            `🏦 موجودی در انتظار انتقال: ${totalPending.toLocaleString()} تومان\n\n` +
+            `🏆 <b>برترین‌های دعوت:</b>\n`;
+
+        refUsers.slice(0, 5).forEach(([id, u], i) => {
+            t += `${i + 1}. ${escapeHTML(maskName(u.firstName))} (<code>${id}</code>) — 👥 ${u.referrals.length} نفر | 💰 ${(u.referralTotalEarned || 0).toLocaleString()} تومان\n`;
+        });
+
+        await safeSendMessage(chatId, t, adminPanelMarkup);
+        return;
+    }
+});
