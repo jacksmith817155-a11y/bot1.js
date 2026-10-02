@@ -529,7 +529,7 @@ function getShopKeyboard() {
         reply_markup: {
             keyboard: [
                 [{ text: '📦 سفارش های اخیر من' }],
-                [{ text: '⭐️ استارز' }],
+                [{ text: '⭐️️ استارز' }],
                 [{ text: '💠 خرید ارز گرام ( GRAM )' }],
                 [{ text: '🎁 گیفت استارزی' }],
                 [{ text: 'برگشت ↩️' }]
@@ -566,7 +566,7 @@ function getAdminPanelKeyboard() {
             keyboard: [
                 [{ text: '➕ افزایش موجودی کاربر' }, { text: '➖ کاهش موجودی کاربر' }],
                 [{ text: '🚫 بن کردن کاربر' }, { text: '✅ آنبن کردن کاربر' }],
-                [{ text: '🏷️️ ساخت کد تخفیف' }, { text: '📋 کد های تخفیف فعال و تمام شده' }],
+                [{ text: '🏷 ساخت کد تخفیف' }, { text: '📋 کد های تخفیف فعال و تمام شده' }],
                 [{ text: '📊 فعالیت ها' }, { text: '👑 تنظیم مالک دوم' }],
                 [{ text: '💎 تنظیم قیمت دستی (تون)' }, { text: '⭐ تنظیم قیمت دستی استارز' }],
                 [{ text: '🎁 تنظیم قیمت دستی گیفت استارزی' }],
@@ -838,7 +838,7 @@ bot.on('message', async (msg) => {
                 reply_markup: {
                     keyboard: [
                         [{ text: 'محاسبه با موجودی من 🔄' }],
-                        [{ text: 'برگشت ↩️' }]
+                        [{ text: 'برگشت ↩️️' }]
                     ],
                     resize_keyboard: true
                 }
@@ -1517,13 +1517,15 @@ bot.on('message', async (msg) => {
             `⏰ زمان: ${userData.lastReceiptTime}`;
 
         const adminMarkup = {
-            inline_keyboard: [
-                [
-                    { text: '✅ تایید', callback_data: `approve_receipt_${chatId}_${amount}_${receiptCode}` },
-                    { text: '❌ رد', callback_data: `reject_receipt_${chatId}` }
-                ],
-                [{ text: '💬 پاسخ به کاربر', callback_data: `reply_${chatId}` }]
-            ]
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '✅ تایید', callback_data: `approve_receipt_${chatId}_${amount}_${receiptCode}` },
+                        { text: '❌ رد', callback_data: `reject_receipt_${chatId}` }
+                    ],
+                    [{ text: '💬 پاسخ به کاربر', callback_data: `reply_${chatId}` }]
+                ]
+            }
         };
 
         await notifyAdminsPhoto(photoId, { caption: adminCaption, parse_mode: 'HTML', reply_markup: adminMarkup });
@@ -1539,6 +1541,8 @@ bot.on('message', async (msg) => {
             `⏳ لطفاً منتظر تایید رسید توسط مدیریت باشید.\n` +
             `اگر دیر شد، روی «پیگیری رسید» بزنید تا برای مدیران یادآوری شود.`,
             { reply_markup: userMarkup });
+        return;
+    }
 
     if (contact) {
         let phoneNum = contact.phone_number;
@@ -1732,7 +1736,7 @@ bot.on('message', async (msg) => {
             `🪐 مزایای گیفت‌های استارزی :\n` +
             `• 🎁 ارسال هدیه به دوستان و آشنایان برای سوپرایز کردن\n` +
             `• ∞ قابل نمایش روی پروفایل تلگرام\n\n` +
-            `🤹‍♂️ لطفاً دسته‌بندی گیفت مورد نظر خود را انتخاب کنید :`;
+            `🤹‍♂️️ لطفاً دسته‌بندی گیفت مورد نظر خود را انتخاب کنید :`;
 
         const giftCategoryKeyboard = {
             reply_markup: {
@@ -1848,7 +1852,7 @@ bot.on('message', async (msg) => {
         saveDatabase();
         await safeSendMessage(chatId, `مبلغی که می‌خواهید حساب را شارژ کنید وارد نمایید (تومان - فقط عدد):`, backKeyboard);
     }
-else if (userData.waitingForAmount && /^\d+$/.test(text)) {
+    else if (userData.waitingForAmount && /^\d+$/.test(text)) {
         const enteredAmount = parseInt(text);
         userData.waitingForAmount = false;
         userData.lastAmount = enteredAmount;
@@ -1856,44 +1860,6 @@ else if (userData.waitingForAmount && /^\d+$/.test(text)) {
         saveDatabase();
 
         const rialAmount = enteredAmount * 10;
-
-        const cardPaymentMsg = 
-            `💳 <b>افزایش موجودی</b>\n\n` +
-            `مبلغ انتخابی: ${enteredAmount.toLocaleString()} تومان\n` +
-            `مبلغ قابل واریز: <b>${rialAmount.toLocaleString()} ریال</b>\n\n` +
-            `شماره کارت:\n<code>${CARD_NUMBER}</code>\n` +
-            `به نام: ${CARD_OWNER}\n\n` +
-            `برای کپی روی دکمه‌های زیر بزنید، بعد از واریز عکس رسید را ارسال کنید.`;
-
-        const paymentKeyboard = {
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: '📋 کپی شماره کارت', copy_text: { text: CARD_NUMBER } }],
-                    [{ text: '📋 کپی دقیق مبلغ (ریال)', copy_text: { text: String(rialAmount) } }]
-                ]
-            }
-        };
-        await safeSendMessage(chatId, cardPaymentMsg, paymentKeyboard);
-        await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', backKeyboard);
-    }
-        const enteredAmount = parseInt(text);
-        userData.waitingForAmount = false;
-        userData.lastAmount = enteredAmount;
-        userData.waitingForReceipt = true;
-        saveDatabase();
-        
-        // محاسبه مبلغ ریالی جهت کپی دقیق
-        const rialAmount = enteredAmount * 10;
-
-        const cardPaymentMsg = 
-            `مبلغ: ${userData.lastAmount.toLocaleString()} تومان\n` +
-            `مبلغ ریالی: <b>${rialAmount.toLocaleString()} ریال</b>\n\n` +
-            `به شماره کارت زیر واریز کنید:\n` +
-            `<code>${CARD_NUMBER}</code>\n` +
-            `به نام: ${CARD_OWNER}\n\n` +
-            `سپس عکس رسید را ارسال کنید.`;
-
-const rialAmount = enteredAmount * 10;
 
         const cardPaymentMsg = 
             `💳 <b>افزایش موجودی</b>\n\n` +
@@ -1913,6 +1879,7 @@ const rialAmount = enteredAmount * 10;
         };
         await safeSendMessage(chatId, cardPaymentMsg, paymentKeyboard);
         await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', getBackKeyboard());
+    }
     else if (text === '📞 پشتیبانی') {
         const supportKeyboard = { 
             reply_markup: { 
@@ -2012,33 +1979,6 @@ bot.on('callback_query', async (callbackQuery) => {
         userData.lastAmount = shortage;
         userData.waitingForReceipt = true;
         saveDatabase();
-        
- const rialAmount = shortage * 10;
-        const cardPaymentMsg = 
-            `💳 <b>افزایش موجودی (مبلغ کسری)</b>\n\n` +
-            `مبلغ: ${shortage.toLocaleString()} تومان\n` +
-            `مبلغ قابل واریز: <b>${rialAmount.toLocaleString()} ریال</b>\n\n` +
-            `شماره کارت:\n<code>${CARD_NUMBER}</code>\n` +
-            `به نام: ${CARD_OWNER}\n\n` +
-            `برای کپی روی دکمه‌های زیر بزنید، بعد از واریز عکس رسید را ارسال کنید.`;
-
-        const paymentKeyboard = {
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: '📋 کپی شماره کارت', copy_text: { text: CARD_NUMBER } }],
-                    [{ text: '📋 کپی دقیق مبلغ (ریال)', copy_text: { text: String(rialAmount) } }]
-                ]
-            }
-        };
-        await safeSendMessage(chatId, cardPaymentMsg, paymentKeyboard);
-        await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', getBackKeyboard());
-
-if (action.startsWith('add_balance_')) {
-        const shortage = parseInt(action.replace('add_balance_', ''));
-        userData.waitingForAmount = false;
-        userData.lastAmount = shortage;
-        userData.waitingForReceipt = true;
-        saveDatabase();
 
         const rialAmount = shortage * 10;
         const cardPaymentMsg = 
@@ -2058,10 +1998,12 @@ if (action.startsWith('add_balance_')) {
             }
         };
         await safeSendMessage(chatId, cardPaymentMsg, paymentKeyboard);
-        await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', backKeyboard);
+        await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', getBackKeyboard());
         try { await bot.answerCallbackQuery(callbackQuery.id); } catch(e){}
         return;
     }
+
+    if (action === 'track_receipt_main') {
         if (!userData.lastReceiptPhotoId) {
             try { await bot.answerCallbackQuery(callbackQuery.id, { text: 'رسیدی برای پیگیری یافت نشد.', show_alert: true }); } catch(e){}
             return;
@@ -2093,6 +2035,8 @@ if (action.startsWith('add_balance_')) {
         await notifyAdminsPhoto(userData.lastReceiptPhotoId, { caption: trackCaption, parse_mode: 'HTML', reply_markup: trackMarkup });
         await safeSendMessage(chatId, '✅ درخواست پیگیری برای مدیران ارسال شد. لطفاً کمی صبر کنید.');
         try { await bot.answerCallbackQuery(callbackQuery.id); } catch(e){}
+        return;
+    }
 
     if (action.startsWith('order_reject_')) {
         const trackingCode = action.replace('order_reject_', '');
