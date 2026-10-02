@@ -419,18 +419,7 @@ function getButtonStyle(text) {
 }
 
 function applyButtonStyles(markup) {
-    try {
-        if (!markup || typeof markup !== 'object') return markup;
-        const mapRow = (row) => (Array.isArray(row) ? row.map(b => (
-            (b && typeof b === 'object' && b.text && !b.style) ? { ...b, style: getButtonStyle(b.text) } : b
-        )) : row);
-        const out = { ...markup };
-        if (Array.isArray(markup.keyboard)) out.keyboard = markup.keyboard.map(mapRow);
-        if (Array.isArray(markup.inline_keyboard)) out.inline_keyboard = markup.inline_keyboard.map(mapRow);
-        return out;
-    } catch (e) {
-        return markup;
-    }
+    return markup;
 }
 
 function styleOptions(options) {
