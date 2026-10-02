@@ -719,13 +719,14 @@ async function fetchGramData() {
 
 function getMainKeyboard(isAdmin) {
     let rows = [
-        [{ text: '🛒 خرید محصول' }],
-        [{ text: '➕ افزایش موجودی' }, { text: '💳 حساب کاربری' }],
-        [{ text: '📞 پشتیبانی' }, { text: '📦 پیگیری سفارش' }],
-        [{ text: '❤️ چطوری میتوانم به شما اعتماد کنم' }]
+        [{ text: '🟢 🛒 خرید محصول' }],
+        [{ text: '🔵 ➕ افزایش موجودی' }, { text: '🔵 💳 حساب کاربری' }],
+        [{ text: '🔴 👥 زیر مجموعه گیری' }],
+        [{ text: '🔵 📞 پشتیبانی' }, { text: '🔵 📦 پیگیری سفارش' }],
+        [{ text: '🔴 ❤️ چطوری میتوانم به شما اعتماد کنم' }]
     ];
     if (isAdmin) {
-        rows.push([{ text: '🔧 پنل مدیریت' }]);
+        rows.push([{ text: '🔴 🔧 پنل مدیریت' }]);
     }
     return { reply_markup: { keyboard: rows, resize_keyboard: true, is_persistent: true } };
 }
@@ -2042,7 +2043,7 @@ ${escapeHTML(text)}`;
         return;
     }
 
-    if (text === '🛒 خرید محصول') {
+    if (text && text.includes('خرید محصول')) {
         userData.currentShopState = 'main_shop';
         saveDatabase();
         await safeSendMessage(chatId, 'وقته محصول رو انتخاب کنی !', getShopKeyboard());
@@ -2178,21 +2179,21 @@ ${escapeHTML(text)}`;
         saveDatabase();
         await safeSendMessage(chatId, 'کامنت دلخواه خود را بفرستید:', backKeyboard);
     }
-    else if (text === '❤️ چطوری میتوانم به شما اعتماد کنم' || isBtn(text, '❤️ چطوری میتوانم به شما اعتماد کنم')) {
+    else if (text && text.includes('چطوری میتوانم به شما اعتماد کنم') || isBtn(text, '❤️ چطوری میتوانم به شما اعتماد کنم')) {
         await safeSendMessage(chatId, `نوا شاپ با رضایت هزاران مشتری فعال در خدمت شماست.\n\nکانال اعتماد:\n@snt_shopp`, backKeyboard);
     }
-    else if (text === '📦 پیگیری سفارش') {
+    else if (text && text.includes('پیگیری سفارش')) {
         userData.waitingForTrackingInput = true;
         saveDatabase();
         await safeSendMessage(chatId, `کد پیگیری سفارش خود را ارسال کنید:`, backKeyboard);
     }
-    else if (text === '💳 حساب کاربری') {
+    else if (text && text.includes('حساب کاربری')) {
         const userInfo = `<b>حساب کاربری شما</b>\n\nنام: ${escapeHTML(userData.firstName)}
 آیدی: <code>${chatId}</code>
 موجودی اصلی: ${userData.wallet.toLocaleString()} تومان`;
         await safeSendMessage(chatId, userInfo, accountKeyboard);
     }
-    else if (text === '➕ افزایش موجودی') {
+    else if (text && text.includes('افزایش موجودی')) {
         const increaseKeyboard = {
             reply_markup: {
                 keyboard: [
@@ -2238,7 +2239,7 @@ ${escapeHTML(text)}`;
         await safeSendMessage(chatId, cardPaymentMsg, paymentKeyboard);
         await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', backKeyboard);
     }
-    else if (text === '📞 پشتیبانی') {
+    else if (text && text.includes('پشتیبانی')) {
         const supportKeyboard = {
             reply_markup: {
                 keyboard: [
