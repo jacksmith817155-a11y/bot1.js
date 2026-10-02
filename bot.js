@@ -1494,44 +1494,51 @@ bot.on('message', async (msg) => {
     if (photo && userData.waitingForReceipt) {
         const photoId = photo[photo.length - 1].file_id;
         userData.waitingForReceipt = false;
-        saveDatabase();
-        
+
         const amount = userData.lastAmount;
         const receiptCode = 'RCP-' + Math.floor(1000 + Math.random() * 9000);
-        
+
+        userData.lastReceiptPhotoId = photoId;
+        userData.lastReceiptCode = receiptCode;
+        userData.lastReceiptAmount = amount;
+        userData.lastReceiptTime = getFormattedTime();
+        saveDatabase();
+
+        const uname = msg.from.username ? '@' + escapeHTML(msg.from.username) : 'ندارد';
         const adminCaption = 
             `<b>[ رسید پرداخت جدید ]</b>\n\n` +
             `👤 نام کاربر: ${escapeHTML(userData.firstName)}\n` +
+            `🔗 یوزرنیم: ${uname}\n` +
             `🆔 آیدی عددی: <code>${chatId}</code>\n` +
+            `📱 شماره: ${escapeHTML(userData.phone)}\n` +
+            `💼 موجودی فعلی: ${userData.wallet.toLocaleString()} تومان\n` +
             `🏷️ شماره رسید: <code>${receiptCode}</code>\n` +
             `💰 مبلغ: ${amount.toLocaleString()} تومان\n` +
-            `⏰ زمان: ${getFormattedTime()}`;
+            `⏰ زمان: ${userData.lastReceiptTime}`;
 
         const adminMarkup = {
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: '✅ تایید', callback_data: `approve_receipt_${chatId}_${amount}_${receiptCode}` }, 
-                        { text: '❌ رد', callback_data: `reject_receipt_${chatId}` }
-                    ],
-                    [
-                        { text: '💬 پاسخ به کاربر', callback_data: `reply_${chatId}` }
-                    ]
-                ]
-            }
+            inline_keyboard: [
+                [
+                    { text: '✅ تایید', callback_data: `approve_receipt_${chatId}_${amount}_${receiptCode}` },
+                    { text: '❌ رد', callback_data: `reject_receipt_${chatId}` }
+                ],
+                [{ text: '💬 پاسخ به کاربر', callback_data: `reply_${chatId}` }]
+            ]
         };
 
         await notifyAdminsPhoto(photoId, { caption: adminCaption, parse_mode: 'HTML', reply_markup: adminMarkup });
 
         const userMarkup = {
-            reply_markup: {
-                inline_keyboard: [[{ text: '💬 پیگیری رسید', callback_data: 'track_receipt_main' }]]
-            }
+            inline_keyboard: [[{ text: '💬 پیگیری رسید', callback_data: 'track_receipt_main' }]]
         };
-        
-        await safeSendMessage(chatId, `✅ رسید شما دریافت شد.\nلطفاً منتظر تایید رسید باشید...`, { reply_markup: userMarkup });
-        return;
-    }
+
+        await safeSendMessage(chatId,
+            `✅ <b>رسید شما دریافت شد</b>\n\n` +
+            `🏷️ شماره رسید: <code>${receiptCode}</code>\n` +
+            `💰 مبلغ: ${amount.toLocaleString()} تومان\n\n` +
+            `⏳ لطفاً منتظر تایید رسید توسط مدیریت باشید.\n` +
+            `اگر دیر شد، روی «پیگیری رسید» بزنید تا برای مدیران یادآوری شود.`,
+            { reply_markup: userMarkup });
 
     if (contact) {
         let phoneNum = contact.phone_number;
@@ -1841,7 +1848,34 @@ bot.on('message', async (msg) => {
         saveDatabase();
         await safeSendMessage(chatId, `مبلغی که می‌خواهید حساب را شارژ کنید وارد نمایید (تومان - فقط عدد):`, backKeyboard);
     }
-    else if (userData.waitingForAmount && /^\d+$/.test(text)) {
+else if (userData.waitingForAmount && /^\d+$/.test(text)) {
+        const enteredAmount = parseInt(text);
+        userData.waitingForAmount = false;
+        userData.lastAmount = enteredAmount;
+        userData.waitingForReceipt = true;
+        saveDatabase();
+
+        const rialAmount = enteredAmount * 10;
+
+        const cardPaymentMsg = 
+            `💳 <b>افزایش موجودی</b>\n\n` +
+            `مبلغ انتخابی: ${enteredAmount.toLocaleString()} تومان\n` +
+            `مبلغ قابل واریز: <b>${rialAmount.toLocaleString()} ریال</b>\n\n` +
+            `شماره کارت:\n<code>${CARD_NUMBER}</code>\n` +
+            `به نام: ${CARD_OWNER}\n\n` +
+            `برای کپی روی دکمه‌های زیر بزنید، بعد از واریز عکس رسید را ارسال کنید.`;
+
+        const paymentKeyboard = {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '📋 کپی شماره کارت', copy_text: { text: CARD_NUMBER } }],
+                    [{ text: '📋 کپی دقیق مبلغ (ریال)', copy_text: { text: String(rialAmount) } }]
+                ]
+            }
+        };
+        await safeSendMessage(chatId, cardPaymentMsg, paymentKeyboard);
+        await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', backKeyboard);
+    }
         const enteredAmount = parseInt(text);
         userData.waitingForAmount = false;
         userData.lastAmount = enteredAmount;
@@ -1859,24 +1893,26 @@ bot.on('message', async (msg) => {
             `به نام: ${CARD_OWNER}\n\n` +
             `سپس عکس رسید را ارسال کنید.`;
 
-        // دکمه‌های کپی خودکار شماره کارت و مبلغ ریالی
+const rialAmount = enteredAmount * 10;
+
+        const cardPaymentMsg = 
+            `💳 <b>افزایش موجودی</b>\n\n` +
+            `مبلغ انتخابی: ${enteredAmount.toLocaleString()} تومان\n` +
+            `مبلغ قابل واریز: <b>${rialAmount.toLocaleString()} ریال</b>\n\n` +
+            `شماره کارت:\n<code>${CARD_NUMBER}</code>\n` +
+            `به نام: ${CARD_OWNER}\n\n` +
+            `برای کپی روی دکمه‌های زیر بزنید، بعد از واریز عکس رسید را ارسال کنید.`;
+
         const paymentKeyboard = {
             reply_markup: {
                 inline_keyboard: [
-                    [
-                        { text: '📋 کپی شماره کارت', callback_data: 'copy_card' },
-                        { text: '📋 کپی دقیق مبلغ (ریال)', callback_data: `copy_rial_${rialAmount}` }
-                    ],
-                    [
-                        { text: '🏷️ اعمال کد تخفیف', callback_data: 'apply_discount_prompt' }
-                    ]
-                ],
-                keyboard: [[{ text: 'برگشت ↩️' }]], 
-                resize_keyboard: true 
+                    [{ text: '📋 کپی شماره کارت', copy_text: { text: CARD_NUMBER } }],
+                    [{ text: '📋 کپی دقیق مبلغ (ریال)', copy_text: { text: String(rialAmount) } }]
+                ]
             }
         };
         await safeSendMessage(chatId, cardPaymentMsg, paymentKeyboard);
-    }
+        await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', getBackKeyboard());
     else if (text === '📞 پشتیبانی') {
         const supportKeyboard = { 
             reply_markup: { 
@@ -1977,73 +2013,86 @@ bot.on('callback_query', async (callbackQuery) => {
         userData.waitingForReceipt = true;
         saveDatabase();
         
-        const rialAmount = shortage * 10;
+ const rialAmount = shortage * 10;
         const cardPaymentMsg = 
+            `💳 <b>افزایش موجودی (مبلغ کسری)</b>\n\n` +
             `مبلغ: ${shortage.toLocaleString()} تومان\n` +
-            `مبلغ ریالی: <b>${rialAmount.toLocaleString()} ریال</b>\n\n` +
-            `به شماره کارت زیر واریز کنید:\n` +
-            `<code>${CARD_NUMBER}</code>\n` +
+            `مبلغ قابل واریز: <b>${rialAmount.toLocaleString()} ریال</b>\n\n` +
+            `شماره کارت:\n<code>${CARD_NUMBER}</code>\n` +
             `به نام: ${CARD_OWNER}\n\n` +
-            `سپس عکس رسید را ارسال کنید.`;
+            `برای کپی روی دکمه‌های زیر بزنید، بعد از واریز عکس رسید را ارسال کنید.`;
 
         const paymentKeyboard = {
             reply_markup: {
                 inline_keyboard: [
-                    [
-                        { text: '📋 کپی شماره کارت', callback_data: 'copy_card' },
-                        { text: '📋 کپی دقیق مبلغ (ریال)', callback_data: `copy_rial_${rialAmount}` }
-                    ]
-                ],
-                keyboard: [[{ text: 'برگشت ↩️' }]], 
-                resize_keyboard: true 
+                    [{ text: '📋 کپی شماره کارت', copy_text: { text: CARD_NUMBER } }],
+                    [{ text: '📋 کپی دقیق مبلغ (ریال)', copy_text: { text: String(rialAmount) } }]
+                ]
             }
         };
         await safeSendMessage(chatId, cardPaymentMsg, paymentKeyboard);
+        await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', getBackKeyboard());
+
+if (action.startsWith('add_balance_')) {
+        const shortage = parseInt(action.replace('add_balance_', ''));
+        userData.waitingForAmount = false;
+        userData.lastAmount = shortage;
+        userData.waitingForReceipt = true;
+        saveDatabase();
+
+        const rialAmount = shortage * 10;
+        const cardPaymentMsg = 
+            `💳 <b>افزایش موجودی (مبلغ کسری)</b>\n\n` +
+            `مبلغ: ${shortage.toLocaleString()} تومان\n` +
+            `مبلغ قابل واریز: <b>${rialAmount.toLocaleString()} ریال</b>\n\n` +
+            `شماره کارت:\n<code>${CARD_NUMBER}</code>\n` +
+            `به نام: ${CARD_OWNER}\n\n` +
+            `برای کپی روی دکمه‌های زیر بزنید، بعد از واریز عکس رسید را ارسال کنید.`;
+
+        const paymentKeyboard = {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '📋 کپی شماره کارت', copy_text: { text: CARD_NUMBER } }],
+                    [{ text: '📋 کپی دقیق مبلغ (ریال)', copy_text: { text: String(rialAmount) } }]
+                ]
+            }
+        };
+        await safeSendMessage(chatId, cardPaymentMsg, paymentKeyboard);
+        await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', backKeyboard);
         try { await bot.answerCallbackQuery(callbackQuery.id); } catch(e){}
         return;
     }
+        if (!userData.lastReceiptPhotoId) {
+            try { await bot.answerCallbackQuery(callbackQuery.id, { text: 'رسیدی برای پیگیری یافت نشد.', show_alert: true }); } catch(e){}
+            return;
+        }
 
-    if (action === 'track_receipt_main') {
-        const supportMarkup = {
+        const uname = callbackQuery.from.username ? '@' + escapeHTML(callbackQuery.from.username) : 'ندارد';
+        const trackCaption = 
+            `🔔 <b>[ پیگیری رسید توسط کاربر ]</b>\n\n` +
+            `👤 نام کاربر: ${escapeHTML(userData.firstName)}\n` +
+            `🔗 یوزرنیم: ${uname}\n` +
+            `🆔 آیدی عددی: <code>${chatId}</code>\n` +
+            `📱 شماره: ${escapeHTML(userData.phone)}\n` +
+            `💼 موجودی فعلی: ${userData.wallet.toLocaleString()} تومان\n` +
+            `🏷️ شماره رسید: <code>${userData.lastReceiptCode}</code>\n` +
+            `💰 مبلغ: ${(userData.lastReceiptAmount || 0).toLocaleString()} تومان\n` +
+            `⏰ زمان ارسال رسید: ${userData.lastReceiptTime}\n\n` +
+            `کاربر منتظر تایید رسید است.`;
+
+        const trackMarkup = {
             inline_keyboard: [
-                [{ text: '👤 پشتیبانی مستقیم', callback_data: 'support_direct' }, { text: '🎫 ارسال تیکت', callback_data: 'support_ticket' }]
+                [
+                    { text: '✅ تایید', callback_data: `approve_receipt_${chatId}_${userData.lastReceiptAmount}_${userData.lastReceiptCode}` },
+                    { text: '❌ رد', callback_data: `reject_receipt_${chatId}` }
+                ],
+                [{ text: '💬 پاسخ به کاربر', callback_data: `reply_${chatId}` }]
             ]
         };
-        await safeSendMessage(chatId, 'رسید شما در حال بررسی است. در صورت نیاز با پشتیبانی در ارتباط باشید:', { reply_markup: supportMarkup });
-        try { await bot.answerCallbackQuery(callbackQuery.id); } catch(e){}
-        return;
-    }
 
-    if (action.startsWith('order_done_')) {
-        const trackingCode = action.replace('order_done_', '');
-        const order = db.orders[trackingCode];
-        if (order && order.status !== 'completed') {
-            order.status = 'completed';
-            saveDatabase();
-            
-            // ارسال فاکتور کامل تکمیل شده به کاربر
-            const completedInvoiceText = 
-                `<b>🎉 سفارش شما تکمیل و انجام شد</b>\n\n` +
-                `📦 محصول: ${escapeHTML(order.giftName)}\n` +
-                `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
-                `💰 مبلغ: ${order.amount.toLocaleString()} تومان\n` +
-                `📅 تاریخ: ${order.time}\n` +
-                `✨ با تشکر از خرید شما از نوا شاپ!`;
-
-            await safeSendMessage(order.userId, completedInvoiceText);
-            try {
-                await bot.editMessageText(`<b>[ سفارش تایید شد ]</b>\n\nکد: <code>${trackingCode}</code>`, {
-                    chat_id: msg.chat.id,
-                    message_id: msg.message_id,
-                    parse_mode: 'HTML'
-                });
-            } catch(e){}
-            
-            await sendChannelReport(order);
-        }
+        await notifyAdminsPhoto(userData.lastReceiptPhotoId, { caption: trackCaption, parse_mode: 'HTML', reply_markup: trackMarkup });
+        await safeSendMessage(chatId, '✅ درخواست پیگیری برای مدیران ارسال شد. لطفاً کمی صبر کنید.');
         try { await bot.answerCallbackQuery(callbackQuery.id); } catch(e){}
-        return;
-    }
 
     if (action.startsWith('order_reject_')) {
         const trackingCode = action.replace('order_reject_', '');
