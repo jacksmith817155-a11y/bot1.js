@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * Stars Plus TELEGRAM BOT - V4.2 (FIXED: receipt buttons, discount creation)
+ * Stars Plus TELEGRAM BOT - V4.3 (live discount invoice edit, callbacks fix)
  * ============================================================================
  */
 
@@ -113,7 +113,8 @@ const bot = new TelegramBot(TOKEN, {
     polling: TOKEN_LOOKS_VALID ? {
         interval: 300,
         autoStart: true,
-        params: { timeout: 30 }
+        // تلگرام allowed_updates قبلی را به خاطر می‌سپارد؛ اینجا صراحتاً callback_query را فعال می‌کنیم
+        params: { timeout: 30, allowed_updates: JSON.stringify(['message', 'callback_query']) }
     } : false,
     filepath: false
 });
@@ -152,6 +153,8 @@ bot.on('polling_error', (err) => {
 });
 
 if (TOKEN_LOOKS_VALID) {
+    // اگر وب‌هوک فعال باشد پولینگ و دکمه‌های شیشه‌ای درست کار نمی‌کنند
+    bot.deleteWebHook().catch(() => {});
     bot.getMe()
         .then(me => SystemLogger.info('Token', `✅ توکن معتبر است. ربات: @${me.username}`))
         .catch(e => SystemLogger.error('Token', 'تایید توکن با getMe ناموفق بود', e));
@@ -496,6 +499,7 @@ function getFormattedTime() {
 }
 
 async function sendChannelReport(order) {
+    // خروجی: null اگر موفق بود، در غیر این صورت متن خطا
     try {
         const userIdStr = order.userId.toString();
         let maskedUserId = userIdStr;
@@ -518,17 +522,18 @@ async function sendChannelReport(order) {
             `🕰 ${formattedTime}\n` +
             `🐺 @NOVA_SHOP3_BOT`;
 
-        const inlineKeyboard = {
+        await bot.sendMessage('@kaiauhahaua', reportMsg, {
+            parse_mode: 'HTML',
             reply_markup: {
                 inline_keyboard: [
                     [{ text: '🤖 | برای خرید اقدام کن!', url: 'https://t.me/NOVA_SHOP3_BOT' }]
                 ]
             }
-        };
-
-        await safeSendMessage('@kaiauhahaua', reportMsg, inlineKeyboard);
+        });
+        return null;
     } catch (err) {
         SystemLogger.error('ChannelReport', 'Failed to send report to channel', err);
+        return (err && err.message) ? err.message : 'unknown error';
     }
 }
 
@@ -767,55 +772,35 @@ function getAdminPanelKeyboard() {
 // INVOICES
 // ============================================================================
 
-async function showStarInvoice(chatId, userData) {
-    const unitPrice = userData.starPricePerUnit || await fetchStarsPrice();
-    let totalPrice = unitPrice * userData.starCount;
+// ---------- discount helpers for invoices ----------
 
-    let discountVal = 0;
-    if (userData.appliedDiscountPercent > 0) {
-        const codeObj = db.discountCodes[userData.appliedDiscountCode];
-        if (!codeObj || codeObj.restriction === 'stars' || codeObj.restriction === null) {
-            discountVal = Math.round(totalPrice * (userData.appliedDiscountPercent / 100));
-        }
-    }
-
-    const availableDiscountWallet = userData.discountWallet || 1766;
-    const finalAmount = Math.max(0, totalPrice - discountVal);
-    userData.lastAmount = finalAmount;
-    saveDatabase();
-
-    const invoiceMsg =
-        `<b>فاکتور خرید استارز</b>\n\n` +
-        `💫 مقدار خرید: ${userData.starCount}\n` +
-        `👤 یوزر دریافت‌کننده: @${escapeHTML(userData.starRecipient)}\n\n` +
-        `💰 مبلغ فاکتور: ${totalPrice.toLocaleString()} تومان\n` +
-        (discountVal > 0 ? `🎫 تخفیف کد: ${discountVal.toLocaleString()} تومان\n` : '') +
-        `🎁 کل موجودی تخفیف: ${availableDiscountWallet.toLocaleString()} تومان\n\n` +
-        `🩵 مبلغ نهایی: <b>${finalAmount.toLocaleString()} تومان</b>\n\n` +
-        `💼 در صورتی که جزئیات بالا مورد تأیید شماست ✓ روی دکمه تأیید کلیک کنید.`;
-
-    const invoiceKeyboard = {
-        reply_markup: {
-            keyboard: [
-                [{ text: 'تأیید ✅' }, { text: 'لغو خرید ❌' }],
-                [{ text: 'اعمال تخفیف 🎁' }, { text: 'اعمال کد تخفیف 🎫' }],
-                [{ text: '🔙 بازگشت به پکیج‌ها' }, { text: '🏠 منوی اصلی' }]
-            ],
-            resize_keyboard: true
-        }
-    };
-
-    await safeDeleteMessage(chatId, userData.lastInvoiceMessageId);
-    const sent = await safeSendPhoto(chatId, '1000002626.jpg', { caption: invoiceMsg, reply_markup: invoiceKeyboard.reply_markup });
-    if (sent && sent.message_id) {
-        userData.lastInvoiceMessageId = sent.message_id;
-        saveDatabase();
-    }
+function clearDiscount(userData) {
+    userData.appliedDiscountCode = null;
+    userData.appliedDiscountPercent = 0;
 }
 
-async function showGiftInvoice(chatId, userData) {
-    let starziTomanPerUnit;
+// درصد تخفیف فقط وقتی اعمال می‌شود که کد وجود داشته باشد و محدودیتش با نوع خرید یکی باشد
+function getActiveDiscountPercent(userData, type) {
+    if (!userData.appliedDiscountCode || !userData.appliedDiscountPercent) return 0;
+    const codeObj = db.discountCodes[userData.appliedDiscountCode];
+    if (!codeObj) return 0;
+    if (codeObj.restriction && codeObj.restriction !== type) return 0;
+    return userData.appliedDiscountPercent;
+}
 
+function buildTotals(total, percent) {
+    const discount = percent > 0 ? Math.round(total * (percent / 100)) : 0;
+    return { total, percent, discount, final: Math.max(0, total - discount) };
+}
+
+async function calcStar(userData) {
+    const unitPrice = userData.starPricePerUnit || await fetchStarsPrice();
+    const total = Math.round(unitPrice * userData.starCount);
+    return buildTotals(total, getActiveDiscountPercent(userData, 'stars'));
+}
+
+async function calcGift(userData) {
+    let starziTomanPerUnit;
     if (db.manualGiftBasePrice && db.manualGiftBasePrice > 0) {
         const base15Price = db.manualGiftBasePrice;
         starziTomanPerUnit = Math.round((base15Price / 15) * userData.selectedGiftStars);
@@ -829,30 +814,41 @@ async function showGiftInvoice(chatId, userData) {
             starziTomanPerUnit = Math.round(baseGiftToman);
         }
     }
+    const total = Math.round(starziTomanPerUnit);
+    return buildTotals(total, getActiveDiscountPercent(userData, 'gift_stars'));
+}
 
-    const totalPrice = Math.round(starziTomanPerUnit);
+async function calcGram(userData) {
+    const freshGramData = await fetchGramData();
+    userData.gramPricePerUnit = freshGramData.finalPrice;
+    const total = Math.round(userData.gramAmount * userData.gramPricePerUnit);
+    return buildTotals(total, getActiveDiscountPercent(userData, 'gram'));
+}
 
-    let discountVal = 0;
-    if (userData.appliedDiscountPercent > 0) {
-        const codeObj = db.discountCodes[userData.appliedDiscountCode];
-        if (!codeObj || codeObj.restriction === 'gift_stars' || codeObj.restriction === null) {
-            discountVal = Math.round(totalPrice * (userData.appliedDiscountPercent / 100));
-        }
+// خط قیمت: اگر تخفیف باشد قیمت قبلی خط می‌خورد
+function priceBlock(c, label) {
+    if (c.discount > 0) {
+        return `${label}: <s>${c.total.toLocaleString()}</s> تومان\n` +
+               `🎫 تخفیف کد (${c.percent}%): ${c.discount.toLocaleString()} تومان\n`;
     }
-    const currentAmount = Math.max(0, totalPrice - discountVal);
-    userData.lastAmount = currentAmount;
-    saveDatabase();
+    return `${label}: ${c.total.toLocaleString()} تومان\n`;
+}
 
-    const invoiceMsg =
-        `<b>فاکتور خرید گیفت</b>\n\n` +
-        `محصول: ${escapeHTML(userData.selectedGiftName)} (${userData.selectedGiftStars} استارز)\n` +
-        `یوزر دریافت‌کننده: @${escapeHTML(userData.recipientUsername)}\n\n` +
-        `کامنت: ${escapeHTML(userData.commentText)}\n\n` +
-        (discountVal > 0 ? `تخفیف کد: ${discountVal.toLocaleString()} تومان\n` : '') +
-        `مبلغ نهایی: <b>${currentAmount.toLocaleString()} تومان</b>\n\n` +
-        `در صورتی که جزئیات بالا مورد تأیید شماست ، روی دکمه تایید کلیک کنید.`;
+function starInvoiceKeyboard() {
+    return {
+        reply_markup: {
+            keyboard: [
+                [{ text: 'تأیید ✅' }, { text: 'لغو خرید ❌' }],
+                [{ text: 'اعمال تخفیف 🎁' }, { text: 'اعمال کد تخفیف 🎫' }],
+                [{ text: '🔙 بازگشت به پکیج‌ها' }, { text: '🏠 منوی اصلی' }]
+            ],
+            resize_keyboard: true
+        }
+    };
+}
 
-    const invoiceKeyboard = {
+function giftInvoiceKeyboard() {
+    return {
         reply_markup: {
             keyboard: [
                 [{ text: '✅ تایید' }, { text: 'لغو خرید ❌' }],
@@ -863,42 +859,10 @@ async function showGiftInvoice(chatId, userData) {
             resize_keyboard: true
         }
     };
-
-    await safeDeleteMessage(chatId, userData.lastInvoiceMessageId);
-    const sent = await safeSendMessage(chatId, invoiceMsg, invoiceKeyboard);
-    if (sent && sent.message_id) {
-        userData.lastInvoiceMessageId = sent.message_id;
-        saveDatabase();
-    }
 }
 
-async function showGramInvoice(chatId, userData) {
-    const freshGramData = await fetchGramData();
-    userData.gramPricePerUnit = freshGramData.finalPrice;
-
-    const totalPrice = Math.round(userData.gramAmount * userData.gramPricePerUnit);
-
-    let discountVal = 0;
-    if (userData.appliedDiscountPercent > 0) {
-        const codeObj = db.discountCodes[userData.appliedDiscountCode];
-        if (!codeObj || codeObj.restriction === 'gram' || codeObj.restriction === null) {
-            discountVal = Math.round(totalPrice * (userData.appliedDiscountPercent / 100));
-        }
-    }
-    const finalAmount = Math.max(0, totalPrice - discountVal);
-    userData.lastAmount = finalAmount;
-    saveDatabase();
-
-    const invoiceMsg =
-        `<b>[ فاکتور خرید ارز گرام ( GRAM ) ]</b>\n\n` +
-        `مقدار خرید: ${userData.gramAmount} گرام\n` +
-        `آدرس ولت: <code>${escapeHTML(userData.gramWalletAddress)}</code>\n` +
-        `کامنت (مم): ${escapeHTML(userData.gramMemo)}\n\n` +
-        (discountVal > 0 ? `تخفیف کد: ${discountVal.toLocaleString()} تومان\n` : '') +
-        `مبلغ نهایی: <b>${finalAmount.toLocaleString()} تومان</b>\n\n` +
-        `در صورتی که جزئیات بالا مورد تأیید شماست ، روی دکمه تایید کلیک کنید.`;
-
-    const invoiceKeyboard = {
+function gramInvoiceKeyboard() {
+    return {
         reply_markup: {
             keyboard: [
                 [{ text: '✅ تایید گرام' }, { text: 'لغو خرید ❌' }],
@@ -908,9 +872,122 @@ async function showGramInvoice(chatId, userData) {
             resize_keyboard: true
         }
     };
+}
+
+function getInvoiceKeyboardForState(state) {
+    if (state === 'star_invoice') return starInvoiceKeyboard();
+    if (state === 'gift_invoice') return giftInvoiceKeyboard();
+    if (state === 'gram_invoice') return gramInvoiceKeyboard();
+    return null;
+}
+
+function getInvoiceShowerForState(state) {
+    if (state === 'star_invoice') return showStarInvoice;
+    if (state === 'gift_invoice') return showGiftInvoice;
+    if (state === 'gram_invoice') return showGramInvoice;
+    return null;
+}
+
+// ویرایش پیام فاکتور (چه عکس‌دار چه متنی)
+async function tryEditInvoice(chatId, messageId, text) {
+    if (!messageId) return false;
+    const opts = { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' };
+    try {
+        await bot.editMessageCaption(text, opts);
+        return true;
+    } catch (e1) {
+        if (/not modified/i.test((e1 && e1.message) || '')) return true;
+        try {
+            await bot.editMessageText(text, opts);
+            return true;
+        } catch (e2) {
+            if (/not modified/i.test((e2 && e2.message) || '')) return true;
+            return false;
+        }
+    }
+}
+
+// قبل از تایید نهایی: اگر کد تخفیف دیگر معتبر نیست (ظرفیت/زمان/نوع خرید) حذفش می‌کنیم
+async function revalidateAppliedDiscount(chatId, userData, showFn) {
+    if (!userData.appliedDiscountCode) return true;
+    const r = validateDiscount(userData.appliedDiscountCode, userData);
+    if (r.ok) return true;
+    clearDiscount(userData);
+    saveDatabase();
+    await safeSendMessage(chatId, `⚠️ ${r.error}\nکد تخفیف از فاکتور حذف شد، لطفاً فاکتور جدید را بررسی کنید.`);
+    await showFn(chatId, userData, false);
+    return false;
+}
+
+// ---------- invoices ----------
+
+async function showStarInvoice(chatId, userData, edit = false) {
+    const c = await calcStar(userData);
+    const availableDiscountWallet = userData.discountWallet || 1766;
+    userData.lastAmount = c.final;
+    saveDatabase();
+
+    const invoiceMsg =
+        `<b>فاکتور خرید استارز</b>\n\n` +
+        `💫 مقدار خرید: ${userData.starCount}\n` +
+        `👤 یوزر دریافت‌کننده: @${escapeHTML(userData.starRecipient)}\n\n` +
+        priceBlock(c, '💰 مبلغ فاکتور') +
+        `🎁 کل موجودی تخفیف: ${availableDiscountWallet.toLocaleString()} تومان\n\n` +
+        `🩵 مبلغ نهایی: <b>${c.final.toLocaleString()} تومان</b>\n\n` +
+        `💼 در صورتی که جزئیات بالا مورد تأیید شماست ✓ روی دکمه تأیید کلیک کنید.`;
+
+    if (edit && await tryEditInvoice(chatId, userData.lastInvoiceMessageId, invoiceMsg)) return;
 
     await safeDeleteMessage(chatId, userData.lastInvoiceMessageId);
-    const sent = await safeSendMessage(chatId, invoiceMsg, invoiceKeyboard);
+    const sent = await safeSendPhoto(chatId, '1000002626.jpg', { caption: invoiceMsg, reply_markup: starInvoiceKeyboard().reply_markup });
+    if (sent && sent.message_id) {
+        userData.lastInvoiceMessageId = sent.message_id;
+        saveDatabase();
+    }
+}
+
+async function showGiftInvoice(chatId, userData, edit = false) {
+    const c = await calcGift(userData);
+    userData.lastAmount = c.final;
+    saveDatabase();
+
+    const invoiceMsg =
+        `<b>فاکتور خرید گیفت</b>\n\n` +
+        `محصول: ${escapeHTML(userData.selectedGiftName)} (${userData.selectedGiftStars} استارز)\n` +
+        `یوزر دریافت‌کننده: @${escapeHTML(userData.recipientUsername)}\n\n` +
+        `کامنت: ${escapeHTML(userData.commentText)}\n\n` +
+        priceBlock(c, '💰 مبلغ فاکتور') +
+        `\nمبلغ نهایی: <b>${c.final.toLocaleString()} تومان</b>\n\n` +
+        `در صورتی که جزئیات بالا مورد تأیید شماست ، روی دکمه تایید کلیک کنید.`;
+
+    if (edit && await tryEditInvoice(chatId, userData.lastInvoiceMessageId, invoiceMsg)) return;
+
+    await safeDeleteMessage(chatId, userData.lastInvoiceMessageId);
+    const sent = await safeSendMessage(chatId, invoiceMsg, giftInvoiceKeyboard());
+    if (sent && sent.message_id) {
+        userData.lastInvoiceMessageId = sent.message_id;
+        saveDatabase();
+    }
+}
+
+async function showGramInvoice(chatId, userData, edit = false) {
+    const c = await calcGram(userData);
+    userData.lastAmount = c.final;
+    saveDatabase();
+
+    const invoiceMsg =
+        `<b>[ فاکتور خرید ارز گرام ( GRAM ) ]</b>\n\n` +
+        `مقدار خرید: ${userData.gramAmount} گرام\n` +
+        `آدرس ولت: <code>${escapeHTML(userData.gramWalletAddress)}</code>\n` +
+        `کامنت (مم): ${escapeHTML(userData.gramMemo)}\n\n` +
+        priceBlock(c, '💰 مبلغ فاکتور') +
+        `\nمبلغ نهایی: <b>${c.final.toLocaleString()} تومان</b>\n\n` +
+        `در صورتی که جزئیات بالا مورد تأیید شماست ، روی دکمه تایید کلیک کنید.`;
+
+    if (edit && await tryEditInvoice(chatId, userData.lastInvoiceMessageId, invoiceMsg)) return;
+
+    await safeDeleteMessage(chatId, userData.lastInvoiceMessageId);
+    const sent = await safeSendMessage(chatId, invoiceMsg, gramInvoiceKeyboard());
     if (sent && sent.message_id) {
         userData.lastInvoiceMessageId = sent.message_id;
         saveDatabase();
@@ -1010,7 +1087,8 @@ async function handleMessage(msg) {
         }
 
         if (text === '🔙 بازگشت به پکیج‌ها' || userData.currentShopState === 'star_recipient' || userData.currentShopState === 'star_invoice') {
-            userData.currentShopState = 'star_menu';
+            clearDiscount(userData);
+        userData.currentShopState = 'star_menu';
             userData.waitingForStarCount = true;
             saveDatabase();
             const starPrice = await fetchStarsPrice();
@@ -1057,6 +1135,22 @@ async function handleMessage(msg) {
 
     if (isAdmin && (text === '🔧 پنل مدیریت' || text === '/admin')) {
         await safeSendMessage(chatId, 'پنل مدیریت:', adminPanelMarkup);
+        return;
+    }
+
+    if (isAdmin && text === '/diag') {
+        try {
+            const info = await bot.getWebHookInfo();
+            await safeSendMessage(chatId,
+                `<b>🔎 تشخیص ربات</b>\n\n` +
+                `Webhook: <code>${escapeHTML(info.url || 'ندارد')}</code>\n` +
+                `پیام‌های در انتظار: ${info.pending_update_count}\n` +
+                `آخرین خطا: ${escapeHTML(info.last_error_message || 'ندارد')}\n\n` +
+                `اگر دکمه‌های شیشه‌ای کار نمی‌کنند، لاگ Render را ببینید: با هر کلیک باید خط [Callback] نمایش داده شود.`,
+                adminPanelMarkup);
+        } catch (e) {
+            await safeSendMessage(chatId, `❌ خطا در تشخیص: ${escapeHTML(e.message)}`, adminPanelMarkup);
+        }
         return;
     }
 
@@ -1522,11 +1616,21 @@ async function handleMessage(msg) {
     if (userData.waitingForDiscountInput && text) {
         userData.waitingForDiscountInput = false;
         saveDatabase();
-        const codeInput = text.trim();
+
+        const state = userData.currentShopState;
+        const showFn = getInvoiceShowerForState(state);
+        const invoiceKb = getInvoiceKeyboardForState(state) || backKeyboard;
+
+        if (!showFn) {
+            await safeSendMessage(chatId, 'ابتدا یک محصول انتخاب کنید و به مرحله فاکتور برسید، سپس کد تخفیف را وارد کنید.', mainKeyboard);
+            return;
+        }
+
+        const codeInput = text.trim().toUpperCase();
         const result = validateDiscount(codeInput, userData);
 
         if (!result.ok) {
-            await safeSendMessage(chatId, `❌ ${result.error}`, backKeyboard);
+            await safeSendMessage(chatId, `❌ ${result.error}`, invoiceKb);
             return;
         }
 
@@ -1534,11 +1638,9 @@ async function handleMessage(msg) {
         userData.appliedDiscountPercent = result.obj.percent;
         saveDatabase();
 
-        await safeSendMessage(chatId, `✅ کد تخفیف ${result.obj.percent}% اعمال شد!`, backKeyboard);
-
-        if (userData.currentShopState === 'gift_invoice') await showGiftInvoice(chatId, userData);
-        else if (userData.currentShopState === 'star_invoice') await showStarInvoice(chatId, userData);
-        else if (userData.currentShopState === 'gram_invoice') await showGramInvoice(chatId, userData);
+        // همان پیام فاکتور ویرایش می‌شود: قیمت قبلی خط می‌خورد و قیمت جدید نمایش داده می‌شود
+        await showFn(chatId, userData, true);
+        await safeSendMessage(chatId, `✅ کد تخفیف ${result.obj.percent}% روی فاکتور شما اعمال شد.`, invoiceKb);
         return;
     }
 
@@ -1587,6 +1689,9 @@ async function handleMessage(msg) {
     });
 
     if (text === 'تأیید ✅' && userData.currentShopState === 'star_invoice') {
+        if (!(await revalidateAppliedDiscount(chatId, userData, showStarInvoice))) return;
+        userData.lastAmount = (await calcStar(userData)).final;
+        saveDatabase();
         if (userData.wallet < userData.lastAmount) {
             await shortageReply();
             return;
@@ -1631,6 +1736,9 @@ async function handleMessage(msg) {
     }
 
     if (text === '✅ تایید' && userData.currentShopState === 'gift_invoice') {
+        if (!(await revalidateAppliedDiscount(chatId, userData, showGiftInvoice))) return;
+        userData.lastAmount = (await calcGift(userData)).final;
+        saveDatabase();
         if (userData.wallet < userData.lastAmount) {
             await shortageReply();
             return;
@@ -1677,17 +1785,8 @@ async function handleMessage(msg) {
 
     if (text === '✅ تایید گرام' && userData.currentShopState === 'gram_invoice') {
         // قیمت لحظه‌ای مجدداً محاسبه می‌شود (با اعمال کد تخفیف)
-        const finalCheckGramData = await fetchGramData();
-        userData.gramPricePerUnit = finalCheckGramData.finalPrice;
-        let base = Math.round(userData.gramAmount * userData.gramPricePerUnit);
-        let disc = 0;
-        if (userData.appliedDiscountPercent > 0) {
-            const codeObj = db.discountCodes[userData.appliedDiscountCode];
-            if (!codeObj || codeObj.restriction === 'gram' || codeObj.restriction === null) {
-                disc = Math.round(base * (userData.appliedDiscountPercent / 100));
-            }
-        }
-        userData.lastAmount = Math.max(0, base - disc);
+        if (!(await revalidateAppliedDiscount(chatId, userData, showGramInvoice))) return;
+        userData.lastAmount = (await calcGram(userData)).final;
         saveDatabase();
 
         if (userData.wallet < userData.lastAmount) {
@@ -1939,6 +2038,7 @@ async function handleMessage(msg) {
         await safeSendMessage(chatId, 'وقته محصول رو انتخاب کنی !\n\n🚀 سفارشات با بالاترین سرعت انجام میشن !', getShopKeyboard());
     }
     else if (text === '⭐️ استارز' || text === '⭐ استارز تلگرام (Telegram Stars)' || isBtn(text, '⭐️ استارز')) {
+        clearDiscount(userData);
         userData.currentShopState = 'star_menu';
         userData.waitingForStarCount = true;
         const starsPrice = await fetchStarsPrice();
@@ -1964,6 +2064,7 @@ async function handleMessage(msg) {
         await safeSendPhoto(chatId, '1000002624.jpg', { caption: starMsg, reply_markup: starMenuKeyboard.reply_markup });
     }
     else if (text === '💠 خرید ارز گرام ( GRAM )') {
+        clearDiscount(userData);
         userData.currentShopState = 'gram_wallet_flow';
         saveDatabase();
         const gramData = await fetchGramData();
@@ -2007,6 +2108,7 @@ async function handleMessage(msg) {
         await safeSendMessage(chatId, giftCategoryMsg, giftCategoryKeyboard);
     }
     else if (text === '🧸 گیفت های عادی') {
+        clearDiscount(userData);
         userData.currentShopState = 'gift_list';
         saveDatabase();
 
@@ -2198,6 +2300,7 @@ async function handleCallback(callbackQuery) {
     const action = callbackQuery.data || '';
     const msg = callbackQuery.message;
     const fromId = callbackQuery.from.id;
+    SystemLogger.info('Callback', `received from=${fromId} data=${action}`);
 
     if (!msg) {
         await safeAnswer(callbackQuery.id);
@@ -2343,20 +2446,31 @@ async function handleCallback(callbackQuery) {
         }
 
         order.status = 'completed';
+        order.completedAt = getFormattedTime();
         saveDatabase();
-        await safeAnswer(callbackQuery.id, { text: '✅ سفارش تایید شد.' });
+        await safeAnswer(callbackQuery.id, { text: '✅ سفارش انجام شد؛ فاکتور برای کاربر و گزارش برای کانال ارسال می‌شود.' });
 
         const completedInvoiceText =
-            `<b>🎉 سفارش شما تکمیل و انجام شد</b>\n\n` +
+            `<b>✅ سفارش شما انجام شد</b>\n` +
+            `🏷️ کد پیگیری: <code>${escapeHTML(trackingCode)}</code>\n\n` +
             `📦 محصول: ${escapeHTML(order.giftName)}\n` +
-            `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
-            `💰 مبلغ: ${order.amount.toLocaleString()} تومان\n` +
-            `📅 تاریخ: ${order.time}\n` +
+            `💰 مبلغ پرداختی: ${order.amount.toLocaleString()} تومان\n` +
+            `📅 تاریخ ثبت: ${order.time}\n` +
+            `✅ تاریخ انجام: ${order.completedAt}\n\n` +
             `✨ با تشکر از خرید شما از نوا شاپ!`;
 
-        await safeSendMessage(order.userId, completedInvoiceText);
-        await editAdminMessage(msg, `<b>[ سفارش تایید شد ✅ ]</b>\n\nکد: <code>${trackingCode}</code>\nتوسط: ${escapeHTML(callbackQuery.from.first_name)}`);
-        await sendChannelReport(order);
+        // همزمان: فاکتور برای کاربر + گزارش کانال + ویرایش پیام ادمین
+        const results = await Promise.all([
+            safeSendMessage(order.userId, completedInvoiceText),
+            sendChannelReport(order),
+            editAdminMessage(msg, `<b>[ سفارش تایید شد ✅ ]</b>\n\nکد: <code>${escapeHTML(trackingCode)}</code>\nتوسط: ${escapeHTML(callbackQuery.from.first_name)}`)
+        ]);
+
+        if (results[1]) {
+            await safeSendMessage(chatId,
+                `⚠️ گزارش خرید به کانال ارسال نشد.\nعلت: ${escapeHTML(results[1])}\n\n` +
+                `ربات را در کانال @kaiauhahaua به‌عنوان ادمین (با دسترسی ارسال پیام) اضافه کنید.`);
+        }
         return;
     }
 
@@ -2371,82 +2485,4 @@ async function handleCallback(callbackQuery) {
 
         adminData.waitingForOrderRejectReason = true;
         adminData.rejectOrderCode = trackingCode;
-        saveDatabase();
-        await safeAnswer(callbackQuery.id);
-        await safeSendMessage(chatId, `لطفاً دلیل رد سفارش <code>${escapeHTML(trackingCode)}</code> را بنویسید:`);
-        return;
-    }
-
-    if (action.startsWith('approve_receipt_')) {
-        const parts = action.split('_');
-        const targetId = parts[2];
-        const amount = parseInt(parts[3]);
-        const receiptCode = parts[4] || ('RCP-X-' + targetId + '-' + amount);
-
-        if (isNaN(amount) || amount <= 0) {
-            await safeAnswer(callbackQuery.id, { text: 'مبلغ رسید نامعتبر است.', show_alert: true });
-            return;
-        }
-
-        if (db.processedReceipts[receiptCode]) {
-            await safeAnswer(callbackQuery.id, { text: 'این رسید قبلاً بررسی شده است.', show_alert: true });
-            await editAdminMessage(msg, `<b>[ این رسید قبلاً بررسی شده ]</b>\n\nشماره رسید: <code>${escapeHTML(receiptCode)}</code>`);
-            return;
-        }
-
-        db.processedReceipts[receiptCode] = 'approved';
-        const targetUser = getUserDataById(targetId);
-        targetUser.wallet += amount;
-
-        db.approvedReceiptsHistory.push({
-            userId: targetId,
-            amount: amount,
-            receiptCode: receiptCode,
-            time: getFormattedTime()
-        });
-        saveDatabase();
-
-        await safeAnswer(callbackQuery.id, { text: '✅ رسید تایید شد و موجودی اضافه شد.' });
-        await safeSendMessage(targetId, `✅ رسید پرداخت شما تایید شد.\nمبلغ ${amount.toLocaleString()} تومان به موجودی شما افزوده شد.`);
-        await editAdminMessage(msg,
-            `<b>[ رسید تایید شد ✅ ]</b>\n\n` +
-            `آیدی: <code>${targetId}</code>\n` +
-            `شماره رسید: <code>${escapeHTML(receiptCode)}</code>\n` +
-            `مبلغ واریزی: ${amount.toLocaleString()} تومان\n` +
-            `توسط: ${escapeHTML(callbackQuery.from.first_name)}`);
-        return;
-    }
-
-    if (action.startsWith('reject_receipt_')) {
-        const parts = action.split('_');
-        const targetId = parts[2];
-        const receiptCode = parts[3] || null;
-
-        if (receiptCode && db.processedReceipts[receiptCode]) {
-            await safeAnswer(callbackQuery.id, { text: 'این رسید قبلاً بررسی شده است.', show_alert: true });
-            await editAdminMessage(msg, `<b>[ این رسید قبلاً بررسی شده ]</b>\n\nشماره رسید: <code>${escapeHTML(receiptCode)}</code>`);
-            return;
-        }
-
-        adminData.waitingForReceiptRejectReason = true;
-        adminData.rejectTargetId = targetId;
-        adminData.rejectReceiptCode = receiptCode;
-        saveDatabase();
-
-        await safeAnswer(callbackQuery.id);
-        await safeSendMessage(chatId, 'لطفاً دلیل رد رسید را ارسال کنید:');
-        await editAdminMessage(msg, `<b>[ در انتظار دلیل رد ]</b>\n\nآیدی: <code>${targetId}</code>\nتوسط: ${escapeHTML(callbackQuery.from.first_name)}`);
-        return;
-    }
-
-    if (action.startsWith('reply_')) {
-        const targetUserId = action.replace('reply_', '');
-        adminData.adminReplyingTo = targetUserId;
-        saveDatabase();
-        await safeAnswer(callbackQuery.id);
-        await safeSendMessage(chatId, `لطفاً پاسخ خود را برای کاربر <code>${targetUserId}</code> ارسال کنید:`);
-        return;
-    }
-
-    await safeAnswer(callbackQuery.id);
-}
+        saveDataba
