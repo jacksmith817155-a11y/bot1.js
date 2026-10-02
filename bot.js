@@ -28,7 +28,7 @@ server.listen(PORT, () => {
 // ============================================================================
 
 // ⚠️ توکن را در Render داخل Environment Variables با اسم BOT_TOKEN بگذارید
-const TOKEN = (process.env.BOT_TOKEN || process.env.TOKEN || 'PUT_YOUR_NEW_TOKEN_HERE')
+const TOKEN = (process.env.BOT_TOKEN || process.env.TOKEN || '8696660217:AAEBI6iOD-OAZpWbCIGy2KU-s-Fc5OQwwVE')
     .toString().trim().replace(/^["']|["']$/g, '');
 // فرمت توکن تلگرام: عدد:حروف (مثلاً 123456789:AAxxxxxxxx...)
 const TOKEN_LOOKS_VALID = /^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(TOKEN);
