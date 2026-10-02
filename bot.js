@@ -28,7 +28,10 @@ server.listen(PORT, () => {
 // ============================================================================
 
 // ⚠️ توکن را در Render داخل Environment Variables با اسم BOT_TOKEN بگذارید
-const TOKEN = process.env.BOT_TOKEN || 'PUT_YOUR_NEW_TOKEN_HERE';
+const TOKEN = (process.env.BOT_TOKEN || process.env.TOKEN || 'PUT_YOUR_NEW_TOKEN_HERE')
+    .toString().trim().replace(/^["']|["']$/g, '');
+// فرمت توکن تلگرام: عدد:حروف (مثلاً 123456789:AAxxxxxxxx...)
+const TOKEN_LOOKS_VALID = /^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(TOKEN);
 const ADMIN_ID_USERNAME = '@shantiaNFT';
 const ADMIN_NUMERIC_ID = 8750484397;
 const EXTRA_ADMIN_ID = '8942987641';
@@ -101,18 +104,58 @@ const TelegramBot = typeof TelegramModule === 'function'
         TelegramModule
     );
 
+if (!TOKEN_LOOKS_VALID) {
+    SystemLogger.error('Token', '❌ توکن ربات نامعتبر یا تنظیم نشده است! در Render > Environment متغیر BOT_TOKEN را با توکن جدید BotFather بسازید (بدون فاصله و کوتیشن) یا مقدار TOKEN را در کد عوض کنید.');
+}
+
 const bot = new TelegramBot(TOKEN, {
-    polling: {
-        interval: 10,
+    // اگر توکن اشتباه باشد، پولینگ شروع نمی‌شود تا لاگ پر از خطا نشود
+    polling: TOKEN_LOOKS_VALID ? {
+        interval: 300,
         autoStart: true,
         params: { timeout: 30 }
-    },
+    } : false,
     filepath: false
 });
 
+let fatalPollingHandled = false;
+let lastPollingErrorLog = 0;
 bot.on('polling_error', (err) => {
-    SystemLogger.error('Polling', 'Polling error', err);
+    const m = (err && err.message) ? err.message : String(err);
+
+    // 404 / 401 یعنی توکن اشتباه یا باطل شده؛ تکرار پولینگ فایده ندارد
+    if (/\b(404|401)\b/.test(m)) {
+        if (!fatalPollingHandled) {
+            fatalPollingHandled = true;
+            SystemLogger.error('Polling', '❌ تلگرام توکن را رد کرد (404/401). توکن اشتباه یا باطل‌شده است. توکن جدید را از BotFather بگیرید و در BOT_TOKEN ست کنید و سرویس را Restart کنید.', err);
+            try { bot.stopPolling(); } catch (e) {}
+        }
+        return;
+    }
+
+    // 409 یعنی همین ربات جای دیگری هم در حال اجراست (فقط یک نمونه باید روشن باشد)
+    if (/\b409\b/.test(m)) {
+        const now = Date.now();
+        if (now - lastPollingErrorLog > 30000) {
+            lastPollingErrorLog = now;
+            SystemLogger.error('Polling', '⚠️ تداخل 409: ربات همزمان در جای دیگری هم اجرا شده. نمونه‌های دیگر (لپ‌تاپ، سرویس قدیمی Render) را خاموش کنید.', err);
+        }
+        return;
+    }
+
+    // سایر خطاها (مثل قطعی شبکه) حداکثر هر ۱۰ ثانیه یک بار لاگ می‌شوند
+    const now = Date.now();
+    if (now - lastPollingErrorLog > 10000) {
+        lastPollingErrorLog = now;
+        SystemLogger.error('Polling', 'Polling error', err);
+    }
 });
+
+if (TOKEN_LOOKS_VALID) {
+    bot.getMe()
+        .then(me => SystemLogger.info('Token', `✅ توکن معتبر است. ربات: @${me.username}`))
+        .catch(e => SystemLogger.error('Token', 'تایید توکن با getMe ناموفق بود', e));
+}
 
 process.on('uncaughtException', (err) => {
     SystemLogger.error('Process', 'Uncaught Exception', err);
