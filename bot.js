@@ -529,7 +529,7 @@ function getShopKeyboard() {
         reply_markup: {
             keyboard: [
                 [{ text: '📦 سفارش های اخیر من' }],
-                [{ text: '⭐️️ استارز' }],
+                [{ text: '⭐️ استارز' }],
                 [{ text: '💠 خرید ارز گرام ( GRAM )' }],
                 [{ text: '🎁 گیفت استارزی' }],
                 [{ text: 'برگشت ↩️' }]
@@ -566,7 +566,7 @@ function getAdminPanelKeyboard() {
             keyboard: [
                 [{ text: '➕ افزایش موجودی کاربر' }, { text: '➖ کاهش موجودی کاربر' }],
                 [{ text: '🚫 بن کردن کاربر' }, { text: '✅ آنبن کردن کاربر' }],
-                [{ text: '🏷 ساخت کد تخفیف' }, { text: '📋 کد های تخفیف فعال و تمام شده' }],
+                [{ text: '🏷️️ ساخت کد تخفیف' }, { text: '📋 کد های تخفیف فعال و تمام شده' }],
                 [{ text: '📊 فعالیت ها' }, { text: '👑 تنظیم مالک دوم' }],
                 [{ text: '💎 تنظیم قیمت دستی (تون)' }, { text: '⭐ تنظیم قیمت دستی استارز' }],
                 [{ text: '🎁 تنظیم قیمت دستی گیفت استارزی' }],
@@ -838,7 +838,7 @@ bot.on('message', async (msg) => {
                 reply_markup: {
                     keyboard: [
                         [{ text: 'محاسبه با موجودی من 🔄' }],
-                        [{ text: 'برگشت ↩️️' }]
+                        [{ text: 'برگشت ↩️' }]
                     ],
                     resize_keyboard: true
                 }
@@ -1517,15 +1517,13 @@ bot.on('message', async (msg) => {
             `⏰ زمان: ${userData.lastReceiptTime}`;
 
         const adminMarkup = {
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: '✅ تایید', callback_data: `approve_receipt_${chatId}_${amount}_${receiptCode}` },
-                        { text: '❌ رد', callback_data: `reject_receipt_${chatId}` }
-                    ],
-                    [{ text: '💬 پاسخ به کاربر', callback_data: `reply_${chatId}` }]
-                ]
-            }
+            inline_keyboard: [
+                [
+                    { text: '✅ تایید', callback_data: `approve_receipt_${chatId}_${amount}_${receiptCode}` },
+                    { text: '❌ رد', callback_data: `reject_receipt_${chatId}` }
+                ],
+                [{ text: '💬 پاسخ به کاربر', callback_data: `reply_${chatId}` }]
+            ]
         };
 
         await notifyAdminsPhoto(photoId, { caption: adminCaption, parse_mode: 'HTML', reply_markup: adminMarkup });
@@ -1736,7 +1734,7 @@ bot.on('message', async (msg) => {
             `🪐 مزایای گیفت‌های استارزی :\n` +
             `• 🎁 ارسال هدیه به دوستان و آشنایان برای سوپرایز کردن\n` +
             `• ∞ قابل نمایش روی پروفایل تلگرام\n\n` +
-            `🤹‍♂️️ لطفاً دسته‌بندی گیفت مورد نظر خود را انتخاب کنید :`;
+            `🤹‍♂️ لطفاً دسته‌بندی گیفت مورد نظر خود را انتخاب کنید :`;
 
         const giftCategoryKeyboard = {
             reply_markup: {
@@ -1852,7 +1850,7 @@ bot.on('message', async (msg) => {
         saveDatabase();
         await safeSendMessage(chatId, `مبلغی که می‌خواهید حساب را شارژ کنید وارد نمایید (تومان - فقط عدد):`, backKeyboard);
     }
-    else if (userData.waitingForAmount && /^\d+$/.test(text)) {
+    else if (userData.waitingForAmount && text && /^\d+$/.test(text)) {
         const enteredAmount = parseInt(text);
         userData.waitingForAmount = false;
         userData.lastAmount = enteredAmount;
@@ -1878,7 +1876,7 @@ bot.on('message', async (msg) => {
             }
         };
         await safeSendMessage(chatId, cardPaymentMsg, paymentKeyboard);
-        await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', getBackKeyboard());
+        await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', backKeyboard);
     }
     else if (text === '📞 پشتیبانی') {
         const supportKeyboard = { 
@@ -2034,6 +2032,36 @@ bot.on('callback_query', async (callbackQuery) => {
 
         await notifyAdminsPhoto(userData.lastReceiptPhotoId, { caption: trackCaption, parse_mode: 'HTML', reply_markup: trackMarkup });
         await safeSendMessage(chatId, '✅ درخواست پیگیری برای مدیران ارسال شد. لطفاً کمی صبر کنید.');
+        try { await bot.answerCallbackQuery(callbackQuery.id); } catch(e){}
+        return;
+    }
+
+    if (action.startsWith('order_done_')) {
+        const trackingCode = action.replace('order_done_', '');
+        const order = db.orders[trackingCode];
+        if (order && order.status !== 'completed') {
+            order.status = 'completed';
+            saveDatabase();
+
+            const completedInvoiceText = 
+                `<b>🎉 سفارش شما تکمیل و انجام شد</b>\n\n` +
+                `📦 محصول: ${escapeHTML(order.giftName)}\n` +
+                `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
+                `💰 مبلغ: ${order.amount.toLocaleString()} تومان\n` +
+                `📅 تاریخ: ${order.time}\n` +
+                `✨ با تشکر از خرید شما از نوا شاپ!`;
+
+            await safeSendMessage(order.userId, completedInvoiceText);
+            try {
+                await bot.editMessageText(`<b>[ سفارش تایید شد ]</b>\n\nکد: <code>${trackingCode}</code>`, {
+                    chat_id: msg.chat.id,
+                    message_id: msg.message_id,
+                    parse_mode: 'HTML'
+                });
+            } catch(e){}
+
+            await sendChannelReport(order);
+        }
         try { await bot.answerCallbackQuery(callbackQuery.id); } catch(e){}
         return;
     }
