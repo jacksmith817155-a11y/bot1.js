@@ -1,10 +1,25 @@
 /**
  * ============================================================================
- * Stars Plus TELEGRAM BOT - V4.3 (live discount invoice edit, callbacks fix)
+ * Stars Plus TELEGRAM BOT - V4.4 (startup crash-proof, live discount invoice edit)
  * ============================================================================
  */
 
-const TelegramModule = require('node-telegram-bot-api');
+// ---- محافظ خطا: قبل از هر چیز ثبت می‌شود تا ربات با یک خطای ناگهانی خاموش نشود ----
+process.on('uncaughtException', (err) => {
+    console.error('[FATAL-GUARD] Uncaught Exception:', err && err.stack ? err.stack : err);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('[FATAL-GUARD] Unhandled Rejection:', reason && reason.stack ? reason.stack : reason);
+});
+
+let TelegramModule;
+try {
+    TelegramModule = require('node-telegram-bot-api');
+} catch (e) {
+    console.error('[FATAL] پکیج node-telegram-bot-api نصب نیست. در package.json بخش dependencies این پکیج باید باشد (npm install node-telegram-bot-api).');
+    console.error(e && e.message ? e.message : e);
+    process.exit(1);
+}
 const fs = require('fs');
 const https = require('https');
 const http = require('http');
@@ -17,6 +32,10 @@ const PORT = process.env.PORT || 10000;
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Stars Plus Bot Web Service is running successfully!\n');
+});
+
+server.on('error', (err) => {
+    console.error(`[Server] HTTP server error (${err && err.code}): ${err && err.message}`);
 });
 
 server.listen(PORT, () => {
@@ -154,14 +173,27 @@ bot.on('polling_error', (err) => {
 
 if (TOKEN_LOOKS_VALID) {
     // اگر وب‌هوک فعال باشد پولینگ و دکمه‌های شیشه‌ای درست کار نمی‌کنند
-    bot.deleteWebHook().catch(() => {});
-    bot.getMe()
-        .then(me => SystemLogger.info('Token', `✅ توکن معتبر است. ربات: @${me.username}`))
-        .catch(e => SystemLogger.error('Token', 'تایید توکن با getMe ناموفق بود', e));
+    try {
+        if (typeof bot.deleteWebHook === 'function') {
+            Promise.resolve(bot.deleteWebHook()).catch(() => {});
+        }
+    } catch (e) {
+        SystemLogger.error('Startup', 'deleteWebHook failed', e);
+    }
+    try {
+        Promise.resolve(bot.getMe())
+            .then(me => SystemLogger.info('Token', `✅ توکن معتبر است. ربات: @${me.username}`))
+            .catch(e => SystemLogger.error('Token', 'تایید توکن با getMe ناموفق بود', e));
+    } catch (e) {
+        SystemLogger.error('Startup', 'getMe failed', e);
+    }
 }
 
+process.removeAllListeners('uncaughtException');
+process.removeAllListeners('unhandledRejection');
 process.on('uncaughtException', (err) => {
     SystemLogger.error('Process', 'Uncaught Exception', err);
+    if (err && err.stack) console.error(err.stack);
 });
 process.on('unhandledRejection', (reason, promise) => {
     SystemLogger.error('Process', `Unhandled Rejection at: ${promise}`, new Error(String(reason)));
@@ -2459,30 +2491,4 @@ async function handleCallback(callbackQuery) {
             `✅ تاریخ انجام: ${order.completedAt}\n\n` +
             `✨ با تشکر از خرید شما از نوا شاپ!`;
 
-        // همزمان: فاکتور برای کاربر + گزارش کانال + ویرایش پیام ادمین
-        const results = await Promise.all([
-            safeSendMessage(order.userId, completedInvoiceText),
-            sendChannelReport(order),
-            editAdminMessage(msg, `<b>[ سفارش تایید شد ✅ ]</b>\n\nکد: <code>${escapeHTML(trackingCode)}</code>\nتوسط: ${escapeHTML(callbackQuery.from.first_name)}`)
-        ]);
-
-        if (results[1]) {
-            await safeSendMessage(chatId,
-                `⚠️ گزارش خرید به کانال ارسال نشد.\nعلت: ${escapeHTML(results[1])}\n\n` +
-                `ربات را در کانال @kaiauhahaua به‌عنوان ادمین (با دسترسی ارسال پیام) اضافه کنید.`);
-        }
-        return;
-    }
-
-    if (action.startsWith('order_reject_')) {
-        const trackingCode = action.replace('order_reject_', '');
-        const order = db.orders[trackingCode];
-        if (!order || order.status !== 'pending') {
-            await safeAnswer(callbackQuery.id, { text: 'این سفارش قبلاً بررسی شده است.', show_alert: true });
-            await editAdminMessage(msg, `<b>[ این سفارش قبلاً بررسی شده ]</b>\n\nکد: <code>${escapeHTML(trackingCode)}</code>`);
-            return;
-        }
-
-        adminData.waitingForOrderRejectReason = true;
-        adminData.rejectOrderCode = trackingCode;
-        saveDataba
+        // همزمان: فاکتور برای کاربر + گزار
