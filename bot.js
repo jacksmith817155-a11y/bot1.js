@@ -376,8 +376,9 @@ async function checkMembership(userId) {
 const BRSAPI_URL = 'https://Api.BrsApi.ir/Market/Cryptocurrency.php?key=BrcH3cX7vcbuX9tE7Pr8dJGsjkeKKJTt';
 const MARKET_CACHE_TTL_MS = 3000;     // قیمت‌ها هر ۳ ثانیه تازه می‌شوند
 const MARKET_FETCH_TIMEOUT_MS = 4000;
+const PRICE_MARGIN = 1.08;            // سود ۸٪ روی قیمت تون (گرام) و استارز
 
-// نام ارزها در API (فارسی و انگلیسی)
+// نام ارزها در API (فارسی و انگلیسی)، بدون نیم‌فاصله و فاصله برای مقایسه
 const MARKET_MATCH = {
     tether: { en: ['tether'],   fa: ['تتر'] },
     ton:    { en: ['toncoin'],  fa: ['تونکوین', 'تون'] },
@@ -453,6 +454,9 @@ function parseMarket(payload) {
     };
 }
 
+/**
+ * دریافت آخرین قیمت‌ها؛ با کش کوتاه، جلوگیری از درخواست همزمان و نگهداری آخرین قیمت معتبر
+ */
 async function getMarket() {
     if (marketCache.data && Date.now() - marketCache.time < MARKET_CACHE_TTL_MS) {
         return marketCache.data;
@@ -466,7 +470,7 @@ async function getMarket() {
             return fresh;
         } catch (e) {
             SystemLogger.error('MarketPrice', 'BrsApi fetch failed', e);
-            return marketCache.data;
+            return marketCache.data; // آخرین قیمت معتبر (یا null اگر هنوز چیزی گرفته نشده)
         } finally {
             marketInFlight = null;
         }
@@ -481,11 +485,13 @@ async function getUsdtTomanPrice() {
 }
 
 async function getTonTomanPrice() {
-    if (db.manualTonPrice && db.manualTonPrice > 0) return db.manualTonPrice;
     const m = await getMarket();
-    return m && m.tonToman > 0 ? m.tonToman : 0;
+    return m && m.tonToman > 0 ? Math.round(m.tonToman * PRICE_MARGIN) : 0;
 }
 
+/**
+ * قیمت هر گرام به تومان، دقیقاً طبق API
+ */
 async function fetchGramData() {
     const tonToman = await getTonTomanPrice();
     const m = await getMarket();
@@ -496,26 +502,37 @@ async function fetchGramData() {
     return { gramUsd: m.gramUsd.toFixed(4), finalPrice: tonToman, usdtToman: m.usdtToman };
 }
 
+/**
+ * قیمت هر استارز = 0.015 تتر (بر اساس قیمت لحظه‌ای تتر به تومان)
+ */
 async function fetchStarsPrice() {
-    if (db.manualStarPrice && db.manualStarPrice > 0) return db.manualStarPrice;
     const usdtToman = await getUsdtTomanPrice();
-    return Math.round(STAR_USD * usdtToman);
+    return Math.round(STAR_USD * usdtToman * PRICE_MARGIN);
 }
 
+/**
+ * متن نمایش قیمت لحظه‌ای برای کاربران
+ */
 async function buildLivePriceText() {
     const m = await getMarket();
     if (!m) return 'در حال حاضر قیمت‌ها در دسترس نیستند. لطفاً کمی بعد دوباره تلاش کنید.';
 
     const starPrice = await fetchStarsPrice();
-    const tonText = m.tonToman > 0 ? `${m.tonToman.toLocaleString()} تومان` : 'در دسترس نیست';
-    const gramText = m.gramToman > 0 ? `${m.gramToman.toLocaleString()} تومان` : 'در دسترس نیست';
+    const tonSale = Math.round(m.tonToman * PRICE_MARGIN);
     const time = new Date().toLocaleTimeString('fa-IR');
 
-    return `<b>💹 قیمت لحظه‌ای</b>\n\n` +
-        `💵 تتر (USDT): <b>${m.usdtToman.toLocaleString()}</b> تومان\n` +
-        `💎 تون (TON): <b>${tonText}</b>\n` +
-        `💠 گرام (GRAM) - برابر قیمت تون: <b>${gramText}</b>\n` +
-        `⭐️ هر استارز: <b>${starPrice.toLocaleString()}</b> تومان (۰.۰۱۵ تتر)\n\n` +
+    return `<b>💹 قیمت لحظه‌ای</b>
+
+` +
+        `💵 تتر (USDT): <b>${m.usdtToman.toLocaleString()}</b> تومان
+` +
+        `💎 تون (TON): <b>${tonSale.toLocaleString()}</b> تومان
+` +
+        `💠 گرام (GRAM) - برابر قیمت تون: <b>${tonSale.toLocaleString()}</b> تومان
+` +
+        `⭐️ هر استارز: <b>${starPrice.toLocaleString()}</b> تومان (۰.۰۱۵ تتر)
+
+` +
         `🕒 آخرین بروزرسانی: ${time}`;
 }
 
@@ -583,7 +600,6 @@ function getAdminPanelKeyboard() {
                 [{ text: '🏆 تغییر سطح کاربر' }, { text: '💳 تایید احراز هویت کاربر' }],
                 [{ text: '🚫 بن کردن کاربر' }, { text: '✅ آنبن کردن کاربر' }],
                 [{ text: '🏷️ ساخت کد تخفیف' }, { text: '👑 تنظیم مالک دوم' }],
-                [{ text: '💎 تنظیم قیمت دستی (تون)' }, { text: '⭐ تنظیم قیمت دستی استارز' }],
                 [{ text: '🔙 بازگشت به منوی اصلی' }]
             ],
             resize_keyboard: true
@@ -642,7 +658,7 @@ async function showStarInvoice(chatId, userData) {
 
 async function showGiftInvoice(chatId, userData) {
     const usdtToman = await getUsdtTomanPrice();
-    const starziTomanPerUnit = Math.round(userData.selectedGiftStars * STAR_USD * usdtToman);
+    const starziTomanPerUnit = Math.round(userData.selectedGiftStars * STAR_USD * usdtToman * PRICE_MARGIN);
     const totalPrice = Math.round(starziTomanPerUnit * userData.giftCount);
     
     let discountVal = 0;
@@ -855,52 +871,6 @@ bot.on('message', async (msg) => {
             await safeSendMessage(chatId, 'وقته محصول رو انتخاب کنی !\n\n🚀 تمامی سفارشات با بالاترین سرعت انجام میشن !', getShopKeyboard());
             return;
         }
-    }
-
-    // =========================================================================
-    // ADMIN MANUAL PRICE SETTING DISPATCHER
-    // =========================================================================
-    if (isAdmin && adminData.waitingForManualPrice && text) {
-        const cleanText = text.replace(/,/g, '').trim();
-        const newPrice = parseInt(cleanText);
-
-        if (isNaN(newPrice) || newPrice < 0) {
-            await safeSendMessage(chatId, '❌ لطفاً یک عدد معتبر به تومان وارد کنید (مثلاً 320000 یا عدد 0 برای حالت آنلاین):');
-            return;
-        }
-
-        db.manualTonPrice = newPrice;
-        adminData.waitingForManualPrice = false;
-        saveDatabase();
-
-        const statusMsg = newPrice === 0 
-            ? '✅ قیمت دستی غیرفعال شد و سیستم مجدداً به صورت <b>آنلاین به بایننس و والکس</b> متصل گردید.' 
-            : `✅ قیمت دستی به مبلغ <b>${newPrice.toLocaleString()} تومان</b> ذخیره شد و <b>بلافاصله در بخش خرید تمام کاربران</b> اعمال گردید.`;
-
-        await safeSendMessage(chatId, `<b>[ بروزرسانی قیمت ]</b>\n\n${statusMsg}`, adminPanelMarkup);
-        return;
-    }
-
-    // بررسی ورودی تنظیم قیمت دستی استارز
-    if (isAdmin && adminData.waitingForManualStarPrice && text) {
-        const cleanText = text.replace(/,/g, '').trim();
-        const newPrice = parseInt(cleanText);
-
-        if (isNaN(newPrice) || newPrice < 0) {
-            await safeSendMessage(chatId, '❌ لطفاً یک عدد معتبر به تومان وارد کنید (مثلاً 600 یا عدد 0 برای حالت خودکار):');
-            return;
-        }
-
-        db.manualStarPrice = newPrice;
-        adminData.waitingForManualStarPrice = false;
-        saveDatabase();
-
-        const statusMsg = newPrice === 0 
-            ? '✅ قیمت دستی استارز غیرفعال شد و سیستم مجدداً به صورت <b>آنلاین بر اساس فرمول تون</b> متصل گردید.' 
-            : `✅ قیمت دستی هر واحد استارز به مبلغ <b>${newPrice.toLocaleString()} تومان</b> ذخیره شد و <b>بلافاصله در بخش خرید تمام کاربران</b> اعمال گردید.`;
-
-        await safeSendMessage(chatId, `<b>[ بروزرسانی قیمت استارز ]</b>\n\n${statusMsg}`, adminPanelMarkup);
-        return;
     }
 
     if (isAdmin && adminData.waitingForOrderRejectReason && text) {
@@ -1550,38 +1520,6 @@ bot.on('message', async (msg) => {
 
     if (text === '🔧 پنل مدیریت' && isAdmin) {
         await safeSendMessage(chatId, 'پنل مدیریت:', adminPanelMarkup);
-    }
-    else if (isAdmin && (text === '💎 تنظیم قیمت دستی (تومان)' || text === '💎 تنظیم قیمت دستی (تون)')) {
-        adminData.waitingForManualPrice = true;
-        saveDatabase();
-
-        const currentPriceText = db.manualTonPrice > 0 
-            ? `<b>${db.manualTonPrice.toLocaleString()} تومان (دستی)</b>` 
-            : `<b>خودکار (زنده از بایننس و والکس)</b>`;
-
-        const manualPriceMsg = 
-            `<b>[ تنظیم قیمت دستی تون ]</b>\n\n` +
-            `وضعیت فعلی قیمت: ${currentPriceText}\n\n` +
-            `لطفاً قیمت پایه جدید را به <b>تومان</b> وارد کنید:\n` +
-            `<i>(نکته: جهت بازگشت به حالت دریافت اتوماتیک از بایننس و والکس، عدد <code>0</code> را ارسال کنید)</i>`;
-
-        await safeSendMessage(chatId, manualPriceMsg, backKeyboard);
-    }
-    else if (isAdmin && text === '⭐ تنظیم قیمت دستی استارز') {
-        adminData.waitingForManualStarPrice = true;
-        saveDatabase();
-
-        const currentPriceText = db.manualStarPrice > 0 
-            ? `<b>${db.manualStarPrice.toLocaleString()} تومان (دستی)</b>` 
-            : `<b>خودکار (بر اساس فرمول تون)</b>`;
-
-        const manualPriceMsg = 
-            `<b>[ تنظیم قیمت دستی استارز ]</b>\n\n` +
-            `وضعیت فعلی قیمت هر واحد: ${currentPriceText}\n\n` +
-            `لطفاً قیمت پایه جدید <b>هر واحد استارز</b> را به <b>تومان</b> وارد کنید:\n` +
-            `<i>(نکته: جهت بازگشت به حالت دریافت اتوماتیک، عدد <code>0</code> را ارسال کنید)</i>`;
-
-        await safeSendMessage(chatId, manualPriceMsg, backKeyboard);
     }
     else if (isAdmin && ['➕ افزایش موجودی کاربر', '➖ کاهش موجودی کاربر', '🏆 تغییر سطح کاربر', '💳 تایید احراز هویت کاربر', '🚫 بن کردن کاربر', '✅ آنبن کردن کاربر', '👑 تنظیم مالک دوم'].includes(text)) {
         adminData.adminAction = text;
