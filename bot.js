@@ -2270,7 +2270,7 @@ async function handleMessage(msg) {
         await safeSendMessage(chatId, `کد پیگیری سفارش خود را ارسال کنید:`, backKeyboard);
     }
     else if (text === '💳 حساب کاربری') {
-        const userInfo = `<b>حساب کاربری شما</b>\n\nنام: ${escapeHTML(userData.firstName)}\nآیدی: <code>${chatId}</code>\موجودی اصلی: ${userData.wallet.toLocaleString()} تومان`;
+        const userInfo = `<b>حساب کاربری شما</b>\n\nنام: ${escapeHTML(userData.firstName)}\nآیدی: <code>${chatId}</code>\nموجودی اصلی: ${userData.wallet.toLocaleString()} تومان`;
         await safeSendMessage(chatId, userInfo, accountKeyboard);
     }
     else if (text === '➕ افزایش موجودی') {
@@ -2510,4 +2510,245 @@ async function handleCallback(callbackQuery) {
 
     // 1. انجام سفارش (تایید سفارش)
     if (action.startsWith('order_done_')) {
-        const trackingCode = actio
+        const trackingCode = action.replace('order_done_', '');
+        const order = db.orders[trackingCode];
+
+        if (!order) {
+            await safeAnswer(callbackQuery.id, { text: 'سفارش یافت نشد.', show_alert: true });
+            return;
+        }
+
+        if (order.status === 'completed') {
+            await safeAnswer(callbackQuery.id, { text: 'این سفارش قبلاً تکمیل شده است.', show_alert: true });
+            return;
+        }
+
+        order.status = 'completed';
+        saveDatabase();
+
+        await safeAnswer(callbackQuery.id, { text: 'سفارش با موفقیت تکمیل شد.' });
+        await editAdminMessage(msg, `${msg.text || msg.caption}\n\n✅ <b>سفارش توسط مدیریت انجام شد.</b>`);
+
+        await safeSendMessage(order.userId,
+            `🎉 <b>سفارش شما تکمیل شد!</b>\n\n` +
+            `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
+            `🛒 محصول: ${escapeHTML(order.giftName)}\n\n` +
+            `با تشکر از خرید شما از نوا شاپ! 🌟`
+        );
+
+        await sendChannelReport(order);
+        return;
+    }
+
+    // 2. رد سفارش
+    if (action.startsWith('order_reject_')) {
+        const trackingCode = action.replace('order_reject_', '');
+        const order = db.orders[trackingCode];
+
+        if (!order) {
+            await safeAnswer(callbackQuery.id, { text: 'سفارش یافت نشد.', show_alert: true });
+            return;
+        }
+
+        if (order.status !== 'pending') {
+            await safeAnswer(callbackQuery.id, { text: 'این سفارش قبلاً بررسی شده است.', show_alert: true });
+            return;
+        }
+
+        adminData.waitingForOrderRejectReason = true;
+        adminData.rejectOrderCode = trackingCode;
+        saveDatabase();
+
+        await safeAnswer(callbackQuery.id);
+        await safeSendMessage(chatId, `لطفاً علت رد سفارش <code>${trackingCode}</code> را وارد کنید:`);
+        await editAdminMessage(msg, `${msg.text || msg.caption}\n\n⏳ <b>در حال ثبت دلیل رد سفارش...</b>`);
+        return;
+    }
+
+    // 3. تایید رسید واریزی
+    if (action.startsWith('approve_receipt_')) {
+        const parts = action.replace('approve_receipt_', '').split('_');
+        const targetUserId = parts[0];
+        const amount = parseInt(parts[1]);
+        const receiptCode = parts[2];
+
+        if (receiptCode && db.processedReceipts[receiptCode] === 'approved') {
+            await safeAnswer(callbackQuery.id, { text: 'این رسید قبلاً تایید شده است.', show_alert: true });
+            return;
+        }
+
+        const targetUserObj = getUserDataById(targetUserId);
+        targetUserObj.wallet += amount;
+
+        if (receiptCode) {
+            db.processedReceipts[receiptCode] = 'approved';
+            db.approvedReceiptsHistory.push({
+                userId: targetUserId,
+                amount: amount,
+                receiptCode: receiptCode,
+                time: getFormattedTime()
+            });
+        }
+        saveDatabase();
+
+        await safeAnswer(callbackQuery.id, { text: 'رسید با موفقیت تایید و موجودی کاربر شارژ شد.' });
+        await editAdminMessage(msg, `${msg.text || msg.caption}\n\n✅ <b>رسید تایید شد و مبلغ ${amount.toLocaleString()} تومان به حساب کاربر افزوده شد.</b>`);
+
+        await safeSendMessage(targetUserId,
+            `✅ <b>رسید واریزی شما تایید شد!</b>\n\n` +
+            `💰 مبلغ: ${amount.toLocaleString()} تومان\n` +
+            `💼 موجودی جدید شما: ${targetUserObj.wallet.toLocaleString()} تومان`
+        );
+
+        // اگر کاربر سفارشی منتظر خودکار داشت
+        const pendingOrder = targetUserObj.pendingOrderToAutoPlace;
+        if (pendingOrder) {
+            let requiredAmount = 0;
+            if (pendingOrder.type === 'star') {
+                const calculated = await calcStar({ ...targetUserObj, starCount: pendingOrder.starCount });
+                requiredAmount = calculated.final;
+            } else if (pendingOrder.type === 'gift') {
+                const calculated = await calcGift({ ...targetUserObj, selectedGiftStars: pendingOrder.selectedGiftStars });
+                requiredAmount = calculated.final;
+            } else if (pendingOrder.type === 'gram') {
+                const calculated = await calcGram({ ...targetUserObj, gramAmount: pendingOrder.gramAmount });
+                requiredAmount = calculated.final;
+            }
+
+            if (targetUserObj.wallet >= requiredAmount && requiredAmount > 0) {
+                targetUserObj.wallet -= requiredAmount;
+                const now = getFormattedTime();
+                let trackingCode = '';
+                let adminOrderMsg = '';
+                let giftName = '';
+
+                if (pendingOrder.type === 'star') {
+                    trackingCode = 'STR-' + Math.floor(10000 + Math.random() * 90000);
+                    giftName = `استارز تلگرام (${pendingOrder.starCount} عدد)`;
+                    db.orders[trackingCode] = {
+                        userId: targetUserId,
+                        firstName: targetUserObj.firstName,
+                        giftName: giftName,
+                        count: pendingOrder.starCount,
+                        recipient: pendingOrder.starRecipient,
+                        comment: 'ندارد',
+                        amount: requiredAmount,
+                        time: now,
+                        status: 'pending'
+                    };
+                    adminOrderMsg =
+                        `<b>[ سفارش جدید خودکار (استارز) ]</b>\n\n` +
+                        `👤 نام کاربر: ${escapeHTML(targetUserObj.firstName)}\n` +
+                        `🆔 آیدی عددی: <code>${targetUserId}</code>\n` +
+                        `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
+                        `💫 تعداد استارز: ${pendingOrder.starCount}\n` +
+                        `📥 دریافت‌کننده: @${escapeHTML(pendingOrder.starRecipient)}\n` +
+                        `💰 مبلغ کل: ${requiredAmount.toLocaleString()} تومان\n` +
+                        `⏰ زمان ثبت: ${now}`;
+                } else if (pendingOrder.type === 'gift') {
+                    trackingCode = 'STZ-' + Math.floor(10000 + Math.random() * 90000);
+                    giftName = pendingOrder.selectedGiftName;
+                    db.orders[trackingCode] = {
+                        userId: targetUserId,
+                        firstName: targetUserObj.firstName,
+                        giftName: giftName,
+                        count: 1,
+                        recipient: pendingOrder.recipientUsername,
+                        comment: pendingOrder.commentText,
+                        amount: requiredAmount,
+                        time: now,
+                        status: 'pending'
+                    };
+                    adminOrderMsg =
+                        `<b>[ سفارش جدید خودکار (گیفت) ]</b>\n\n` +
+                        `👤 نام کاربر: ${escapeHTML(targetUserObj.firstName)}\n` +
+                        `🆔 آیدی عددی: <code>${targetUserId}</code>\n` +
+                        `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
+                        `🎁 نام گیفت: ${escapeHTML(pendingOrder.selectedGiftName)}\n` +
+                        `📥 دریافت‌کننده: @${escapeHTML(pendingOrder.recipientUsername)}\n` +
+                        `💬 کامنت: ${escapeHTML(pendingOrder.commentText)}\n` +
+                        `💰 مبلغ کل: ${requiredAmount.toLocaleString()} تومان\n` +
+                        `⏰ زمان ثبت: ${now}`;
+                } else if (pendingOrder.type === 'gram') {
+                    trackingCode = 'GRAM-' + Math.floor(10000 + Math.random() * 90000);
+                    giftName = `ارز گرام (${pendingOrder.gramAmount} GRAM)`;
+                    db.orders[trackingCode] = {
+                        userId: targetUserId,
+                        firstName: targetUserObj.firstName,
+                        giftName: giftName,
+                        count: pendingOrder.gramAmount,
+                        recipient: pendingOrder.gramWalletAddress,
+                        comment: pendingOrder.gramMemo,
+                        amount: requiredAmount,
+                        time: now,
+                        status: 'pending'
+                    };
+                    adminOrderMsg =
+                        `<b>[ سفارش جدید خودکار (گرام) ]</b>\n\n` +
+                        `👤 نام کاربر: ${escapeHTML(targetUserObj.firstName)}\n` +
+                        `🆔 آیدی عددی: <code>${targetUserId}</code>\n` +
+                        `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
+                        `💠 مقدار گرام: ${pendingOrder.gramAmount}\n` +
+                        `📫 آدرس ولت: <code>${escapeHTML(pendingOrder.gramWalletAddress)}</code>\n` +
+                        `💬 ممو / کامنت: ${escapeHTML(pendingOrder.gramMemo)}\n` +
+                        `💰 مبلغ کل: ${requiredAmount.toLocaleString()} تومان\n` +
+                        `⏰ زمان ثبت: ${now}`;
+                }
+
+                targetUserObj.pendingOrderToAutoPlace = null;
+                consumeDiscount(targetUserObj);
+                saveDatabase();
+
+                await safeSendMessage(targetUserId,
+                    `🚀 <b>سفارش معلق شما پس از تایید واریزی به طور خودکار ثبت گردید!</b>\n\n` +
+                    `📦 کد پیگیری سفارش: <code>${trackingCode}</code>\n` +
+                    `🛒 محصول: ${escapeHTML(giftName)}\n` +
+                    `💳 مبلغ: ${requiredAmount.toLocaleString()} تومان`
+                );
+
+                const adminOrderMarkup = {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '✅ انجام شد', callback_data: `order_done_${trackingCode}` }, { text: '❌ رد شد', callback_data: `order_reject_${trackingCode}` }]
+                        ]
+                    }
+                };
+                await notifyAdmins(adminOrderMsg, adminOrderMarkup);
+            }
+        }
+        return;
+    }
+
+    // 4. رد رسید واریزی
+    if (action.startsWith('reject_receipt_')) {
+        const parts = action.replace('reject_receipt_', '').split('_');
+        const targetUserId = parts[0];
+        const receiptCode = parts[1];
+
+        if (receiptCode && db.processedReceipts[receiptCode]) {
+            await safeAnswer(callbackQuery.id, { text: 'این رسید قبلاً بررسی شده است.', show_alert: true });
+            return;
+        }
+
+        adminData.waitingForReceiptRejectReason = true;
+        adminData.rejectTargetId = targetUserId;
+        adminData.rejectReceiptCode = receiptCode;
+        saveDatabase();
+
+        await safeAnswer(callbackQuery.id);
+        await safeSendMessage(chatId, `لطفاً علت رد رسید واریزی کاربر <code>${targetUserId}</code> را وارد کنید:`);
+        await editAdminMessage(msg, `${msg.text || msg.caption}\n\n⏳ <b>در حال ثبت دلیل رد رسید...</b>`);
+        return;
+    }
+
+    // 5. پاسخ مستقیم به کاربر
+    if (action.startsWith('reply_')) {
+        const targetUserId = action.replace('reply_', '');
+        adminData.adminReplyingTo = targetUserId;
+        saveDatabase();
+
+        await safeAnswer(callbackQuery.id);
+        await safeSendMessage(chatId, `لطفاً متن پاسخ خود را برای کاربر <code>${targetUserId}</code> ارسال کنید:`, getBackKeyboard());
+        return;
+    }
+}
