@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * Stars Plus TELEGRAM BOT - V5.1 (Real TON Transaction Verification)
+ * Stars Plus TELEGRAM BOT - V5.2 (Dedicated TON Center API Integration)
  * ============================================================================
  */
 
@@ -27,16 +27,19 @@ const path = require('path');
 const { TonClient, WalletContractV4, internal, toNano } = require('@ton/ton');
 const { mnemonicToPrivateKey } = require('@ton/crypto');
 
+const TONCENTER_API_KEY = process.env.TONCENTER_API_KEY || '9828ca2eae03918a5216f6e8e2b163c7d688d07f7aea8dfd404ade293497ea80';
+
 async function sendTonAuto(toAddress, amountInTon, memo = '') {
     try {
         const client = new TonClient({
-            endpoint: 'https://toncenter.com/api/v2/jsonRPC'
+            endpoint: 'https://toncenter.com/api/v2/jsonRPC',
+            apiKey: TONCENTER_API_KEY
         });
 
         const rawMnemonic = process.env.WALLET_MNEMONIC || '';
         if (!rawMnemonic) {
             console.error('[TON-PAYOUT] WALLET_MNEMONIC is missing!');
-            return { success: false, error: 'کلمات کلیدی ولت تنظیم نشده است.' };
+            return { success: false, error: 'کلمات کلیدی ولت (WALLET_MNEMONIC) در بخش متغیرها تنظیم نشده است.' };
         }
 
         const mnemonic = rawMnemonic.trim().split(/\s+/);
@@ -67,9 +70,9 @@ async function sendTonAuto(toAddress, amountInTon, memo = '') {
 
         await contract.send(transfer);
 
-        // انتظار برای تغییر seqno تا مطمئن شویم تراکنش حتماً انجام شده است
+        // انتظار برای تغییر seqno تا مطمئن شویم تراکنش حتماً در بلاک‌چین ثبت شده است
         let currentSeqno = seqno;
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < 12; i++) {
             await new Promise(resolve => setTimeout(resolve, 1500));
             try {
                 currentSeqno = await contract.getSeqno();
@@ -80,7 +83,7 @@ async function sendTonAuto(toAddress, amountInTon, memo = '') {
         }
 
         if (currentSeqno === seqno && seqno !== 0) {
-            return { success: false, error: 'تراکنش در شبکه TON تایید نشد یا زمان آن به پایان رسید.' };
+            return { success: false, error: 'تراکنش در شبکه TON تایید نشد. لطفاً موجودی کارمزد ولت را بررسی کنید.' };
         }
 
         const txHash = transfer.hash().toString('hex');
@@ -2029,7 +2032,7 @@ async function handleMessage(msg) {
         saveDatabase();
         consumeDiscount(userData);
 
-        // اجرای واریز آنی و تایید واقعی تراکنش
+        // اجرای واریز آنی و تایید واقعی تراکنش با API Key اختصاصی
         await processAutoTonPayout(orderObj, trackingCode);
 
         userData.currentShopState = null;
