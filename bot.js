@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * Stars Plus TELEGRAM BOT - V5.3 (Hardcoded Wallet & Dedicated TONCenter API)
+ * Stars Plus TELEGRAM BOT - V5.4 (Fix TONCenter 500 Error & Auto-Fallback SDK)
  * ============================================================================
  */
 
@@ -24,77 +24,89 @@ const http = require('http');
 const path = require('path');
 
 // ---- SDK شبکه TON برای ارسال آنی ارز ----
-const { TonClient, WalletContractV4, internal, toNano } = require('@ton/ton');
+const { TonClient, WalletContractV4, internal, toNano, beginCell } = require('@ton/ton');
 const { mnemonicToPrivateKey } = require('@ton/crypto');
 
 const TONCENTER_API_KEY = process.env.TONCENTER_API_KEY || '9828ca2eae03918a5216f6e8e2b163c7d688d07f7aea8dfd404ade293497ea80';
 const DEFAULT_MNEMONIC = 'keen achieve minute mule device text lonely vacuum door crystal month wreck agent bottom force minimum spy guess want plug opera protect away burden';
 
+const TON_ENDPOINTS = [
+    'https://toncenter.com/api/v2/jsonRPC',
+    'https://tonhub.com/api/v2/jsonRPC'
+];
+
 async function sendTonAuto(toAddress, amountInTon, memo = '') {
-    try {
-        const client = new TonClient({
-            endpoint: 'https://toncenter.com/api/v2/jsonRPC',
-            apiKey: TONCENTER_API_KEY
-        });
+    let lastError = '';
 
-        const rawMnemonic = process.env.WALLET_MNEMONIC || DEFAULT_MNEMONIC;
-        if (!rawMnemonic) {
-            console.error('[TON-PAYOUT] WALLET_MNEMONIC is missing!');
-            return { success: false, error: 'کلمات کلیدی ولت تنظیم نشده است.' };
-        }
-
-        const mnemonic = rawMnemonic.trim().split(/\s+/);
-        const key = await mnemonicToPrivateKey(mnemonic);
-        const wallet = WalletContractV4.create({ publicKey: key.publicKey, workchain: 0 });
-        
-        const contract = client.open(wallet);
-        
-        let seqno = 0;
+    for (const endpoint of TON_ENDPOINTS) {
         try {
-            seqno = await contract.getSeqno();
-        } catch (sErr) {
-            seqno = 0;
-        }
+            const client = new TonClient({
+                endpoint: endpoint,
+                apiKey: endpoint.includes('toncenter') ? TONCENTER_API_KEY : undefined
+            });
 
-        const transfer = contract.createTransfer({
-            seqno: seqno,
-            secretKey: key.secretKey,
-            messages: [
-                internal({
-                    to: toAddress,
-                    value: toNano(amountInTon.toString()),
-                    bounce: false,
-                    body: memo && memo !== 'ندارد' ? memo : 'Stars Plus Auto Payout',
-                })
-            ]
-        });
-
-        await contract.send(transfer);
-
-        // انتظار برای تغییر seqno تا مطمئن شویم تراکنش حتماً در بلاک‌چین ثبت شده است
-        let currentSeqno = seqno;
-        for (let i = 0; i < 12; i++) {
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            const rawMnemonic = process.env.WALLET_MNEMONIC || DEFAULT_MNEMONIC;
+            const mnemonic = rawMnemonic.trim().split(/\s+/);
+            const key = await mnemonicToPrivateKey(mnemonic);
+            const wallet = WalletContractV4.create({ publicKey: key.publicKey, workchain: 0 });
+            
+            const contract = client.open(wallet);
+            
+            let seqno = 0;
             try {
-                currentSeqno = await contract.getSeqno();
-                if (currentSeqno > seqno) {
-                    break;
-                }
-            } catch (e) {}
+                seqno = await contract.getSeqno();
+            } catch (sErr) {
+                seqno = 0;
+            }
+
+            const bodyText = memo && memo !== 'ندارد' ? memo : 'Stars Plus Auto Payout';
+            const bodyCell = beginCell()
+                .storeUint(0, 32)
+                .storeStringTail(bodyText)
+                .endCell();
+
+            const transfer = contract.createTransfer({
+                seqno: seqno,
+                secretKey: key.secretKey,
+                messages: [
+                    internal({
+                        to: toAddress,
+                        value: toNano(amountInTon.toString()),
+                        bounce: false,
+                        body: bodyCell,
+                    })
+                ]
+            });
+
+            await contract.send(transfer);
+
+            let currentSeqno = seqno;
+            for (let i = 0; i < 10; i++) {
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                try {
+                    currentSeqno = await contract.getSeqno();
+                    if (currentSeqno > seqno) {
+                        break;
+                    }
+                } catch (e) {}
+            }
+
+            if (currentSeqno === seqno && seqno !== 0) {
+                lastError = 'تراکنش در شبکه TON تایید نشد. موجودی کارمزد ولت را بررسی کنید.';
+                continue;
+            }
+
+            const txHash = transfer.hash().toString('hex');
+            const txLink = `https://tonviewer.com/transaction/${txHash}`;
+
+            return { success: true, txHash, txLink };
+        } catch (err) {
+            console.error(`[TON-PAYOUT-ERROR] (${endpoint}):`, err.message || err);
+            lastError = err.message || String(err);
         }
-
-        if (currentSeqno === seqno && seqno !== 0) {
-            return { success: false, error: 'تراکنش در شبکه TON تایید نشد. لطفاً موجودی کارمزد ولت را بررسی کنید.' };
-        }
-
-        const txHash = transfer.hash().toString('hex');
-        const txLink = `https://tonviewer.com/transaction/${txHash}`;
-
-        return { success: true, txHash, txLink };
-    } catch (err) {
-        console.error('[TON-PAYOUT-ERROR]', err);
-        return { success: false, error: err.message };
     }
+
+    return { success: false, error: lastError || 'خطا در ارتباط با شبکه TON' };
 }
 
 // ============================================================================
