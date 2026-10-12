@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * Stars Plus TELEGRAM BOT - V4.7 (Complete, Auto-TON Payout, Tonviewer Link)
+ * Stars Plus TELEGRAM BOT - V4.8 (100% Instant Auto TON Payout + Explorer Link)
  * ============================================================================
  */
 
@@ -23,7 +23,7 @@ const https = require('https');
 const http = require('http');
 const path = require('path');
 
-// ---- TON SDK INTEGRATION FOR AUTOMATIC PAYOUTS ----
+// ---- SDK شبکه TON برای ارسال آنی ارز ----
 const { TonClient, WalletContractV4, internal, toNano } = require('@ton/ton');
 const { mnemonicToPrivateKey } = require('@ton/crypto');
 
@@ -35,8 +35,8 @@ async function sendTonAuto(toAddress, amountInTon, memo = '') {
 
         const rawMnemonic = process.env.WALLET_MNEMONIC || '';
         if (!rawMnemonic) {
-            console.error('[TON-PAYOUT] WALLET_MNEMONIC is missing in environment variables.');
-            return { success: false, error: 'کلید کیف پول ولت ست نشده است.' };
+            console.error('[TON-PAYOUT] WALLET_MNEMONIC is missing!');
+            return { success: false, error: 'کلمات کلیدی ولت ست نشده است.' };
         }
 
         const mnemonic = rawMnemonic.trim().split(/\s+/);
@@ -61,7 +61,6 @@ async function sendTonAuto(toAddress, amountInTon, memo = '') {
 
         await contract.send(transfer);
 
-        // محاسبه تقریبی یا ساخت لینک پیگیری
         const txHash = transfer.hash().toString('hex');
         const txLink = `https://tonviewer.com/transaction/${txHash}`;
 
@@ -321,7 +320,7 @@ function getUserDataTemplate() {
         gramPricePerUnit: 0,
         gramWalletAddress: '',
         gramMemo: 'ندارد',
-        tonOrderMode: 'wallet', // 'wallet' یا 'account'
+        tonOrderMode: 'wallet',
 
         lastReceiptPhotoId: null,
         lastReceiptCode: null,
@@ -826,7 +825,6 @@ function getMainKeyboard(isAdmin) {
     return { reply_markup: { keyboard: rows, resize_keyboard: true, is_persistent: true } };
 }
 
-// کیبورد محصولات طبق عکس[span_3](start_span)[span_3](end_span)
 function getShopKeyboard() {
     return {
         reply_markup: {
@@ -1091,11 +1089,7 @@ async function showGramInvoice(chatId, userData, edit = false) {
     }
 }
 
-// تابع پردازش خودکار تسویه یا ارسال لایو تون
 async function processAutoTonPayout(order, trackingCode) {
-    const userObj = getUserDataById(order.userId);
-    
-    // اگر واریز به ولت شخصی بود
     if (order.recipient && order.recipient.length > 20 && (order.recipient.startsWith('UQ') || order.recipient.startsWith('EQ') || order.recipient.startsWith('0:'))) {
         const payoutResult = await sendTonAuto(order.recipient, order.count, order.comment !== 'ندارد' ? order.comment : '');
         
@@ -1116,7 +1110,6 @@ async function processAutoTonPayout(order, trackingCode) {
             await sendChannelReport(order, payoutResult.txLink);
             return true;
         } else {
-            // در صورت بروز خطا در شبکه، به عنوان pending برای ادمین فرستاده می‌شود
             SystemLogger.error('TON-AUTO-PAYOUT', `Auto payout failed for ${trackingCode}: ${payoutResult.error}`);
         }
     }
@@ -1244,7 +1237,6 @@ async function handleMessage(msg) {
             userData.currentShopState = 'main_shop';
             saveDatabase();
             
-            // فرم متنی خرید محصول طبق تصویر[span_4](start_span)[span_4](end_span)
             const shopMsg = 
                 `🛒 **وقتشه محصولت رو انتخاب کنی !**\n\n` +
                 `🚀 تمامی سفارشات با بالاترین سرعت و همراه با پشتیبانی کامل انجام می‌شن تا تجربه‌ای مطمئن و بی‌دغدغه داشته باشی !\n\n` +
@@ -1331,7 +1323,7 @@ async function handleMessage(msg) {
         const statusMsg = newPrice === 0
             ? '✅ قیمت دستی گیفت غیرفعال شد.'
             : `✅ قیمت دستی گیفت ۱۵ استارزی به مبلغ <b>${newPrice.toLocaleString()} تومان</b> تنظیم شد.`;
-        await safeSendMessage(chatId, `<b>[ تنظیم قیمت گیفت‌های استارزی ]</b>\n\n${statusMsg}`, adminPanelMarkup);
+        await safeSendMessage(chatId, `<b>[ تنظیم قیمت دستی گیفت‌های استارزی ]</b>\n\n${statusMsg}`, adminPanelMarkup);
         return;
     }
 
@@ -1618,7 +1610,6 @@ async function handleMessage(msg) {
         return;
     }
 
-    // ورودی تعداد تون در جریان خرید تون
     if (userData.waitingForGramAmount && text) {
         if (text === 'محاسبه با موجودی من 🔄') {
             const liveGramData = await fetchGramData();
@@ -1637,7 +1628,6 @@ async function handleMessage(msg) {
         userData.gramAmount = gramInput;
         userData.waitingForGramAmount = false;
 
-        // اگر واریز مستقیم به اکانت تلگرام بود
         if (userData.tonOrderMode === 'account') {
             userData.gramWalletAddress = msg.from.username || msg.from.id.toString();
             userData.gramMemo = 'واریز به اکانت تلگرام';
@@ -1960,7 +1950,6 @@ async function handleMessage(msg) {
         return;
     }
 
-    // تایید سفارش ارز TON
     if (text === '✅ تایید گرام' && userData.currentShopState === 'gram_invoice') {
         if (!(await revalidateAppliedDiscount(chatId, userData, showGramInvoice))) return;
         userData.lastAmount = (await calcGram(userData)).final;
@@ -1998,7 +1987,6 @@ async function handleMessage(msg) {
         saveDatabase();
         consumeDiscount(userData);
 
-        // تلاش برای واریز اتوماتیک
         const autoSuccess = await processAutoTonPayout(orderObj, trackingCode);
 
         if (!autoSuccess) {
@@ -2197,7 +2185,6 @@ async function handleMessage(msg) {
         userData.currentShopState = 'main_shop';
         saveDatabase();
 
-        // فرم متنی خرید محصول طبق عکس[span_5](start_span)[span_5](end_span)
         const shopMsg = 
             `🛒 **وقتشه محصولت رو انتخاب کنی !**\n\n` +
             `🚀 تمامی سفارشات با بالاترین سرعت و همراه با پشتیبانی کامل انجام می‌شن تا تجربه‌ای مطمئن و بی‌دغدغه داشته باشی !\n\n` +
@@ -2205,7 +2192,6 @@ async function handleMessage(msg) {
 
         await safeSendMessage(chatId, shopMsg, getShopKeyboard());
     }
-    // دکمه خرید ارز تون در منوی اصلی[span_6](start_span)[span_6](end_span)[span_7](start_span)[span_7](end_span)
     else if (text === 'خرید ارز تون 💎' || isBtn(text, 'خرید ارز تون 💎')) {
         clearDiscount(userData);
         userData.currentShopState = 'ton_select_mode';
@@ -2232,7 +2218,6 @@ async function handleMessage(msg) {
 
         await safeSendMessage(chatId, tonMsg, tonModeMarkup);
     }
-    // دکمه شارژ تون بالانس طبق عکس[span_8](start_span)[span_8](end_span)[span_9](start_span)[span_9](end_span)
     else if (text === 'شارژ تون بالانس ⚡' || isBtn(text, 'شارژ تون بالانس ⚡')) {
         clearDiscount(userData);
         userData.currentShopState = 'gram_wallet_flow';
@@ -2510,7 +2495,6 @@ async function handleCallback(callbackQuery) {
     const userData = getUserDataById(fromId);
     const isAdmin = isUserAdmin(fromId);
 
-    // دکمه‌های اینلاین انتخاب نوع واریز ارز تون[span_10](start_span)[span_10](end_span)
     if (action === 'ton_mode_wallet' || action === 'ton_mode_account') {
         userData.tonOrderMode = action === 'ton_mode_wallet' ? 'wallet' : 'account';
         userData.currentShopState = 'gram_wallet_flow';
@@ -2635,7 +2619,7 @@ async function handleCallback(callbackQuery) {
 
     const adminData = getUserDataById(fromId);
 
-    // 1. انجام دستی سفارش
+    // 1. انجام سفارش
     if (action.startsWith('order_done_')) {
         const trackingCode = action.replace('order_done_', '');
         const order = db.orders[trackingCode];
@@ -2692,7 +2676,7 @@ async function handleCallback(callbackQuery) {
         return;
     }
 
-    // 3. تایید رسید واریزی و ثبت/ارسال خودکار سفارش معلق
+    // 3. تایید رسید و واریز اتوماتیک سفارش معلق
     if (action.startsWith('approve_receipt_')) {
         const parts = action.replace('approve_receipt_', '').split('_');
         const targetUserId = parts[0];
@@ -2727,7 +2711,6 @@ async function handleCallback(callbackQuery) {
             `💼 موجودی جدید شما: ${targetUserObj.wallet.toLocaleString()} تومان`
         );
 
-        // اجرای سفارش معلق کاربر به صورت خودکار
         const pendingOrder = targetUserObj.pendingOrderToAutoPlace;
         if (pendingOrder) {
             let requiredAmount = 0;
@@ -2768,7 +2751,6 @@ async function handleCallback(callbackQuery) {
                     consumeDiscount(targetUserObj);
                     saveDatabase();
 
-                    // واریز اتوماتیک TON به کیف پول
                     const autoSuccess = await processAutoTonPayout(orderObj, trackingCode);
 
                     if (!autoSuccess) {
@@ -2843,7 +2825,7 @@ async function handleCallback(callbackQuery) {
         return;
     }
 
-    // 4. رد رسید واریزی
+    // 4. رد رسید
     if (action.startsWith('reject_receipt_')) {
         const parts = action.replace('reject_receipt_', '').split('_');
         const targetUserId = parts[0];
@@ -2865,7 +2847,7 @@ async function handleCallback(callbackQuery) {
         return;
     }
 
-    // 5. پاسخ مستقیم به کاربر
+    // 5. پاسخ ادمین
     if (action.startsWith('reply_')) {
         const targetUserId = action.replace('reply_', '');
         adminData.adminReplyingTo = targetUserId;
