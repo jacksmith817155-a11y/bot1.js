@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * Stars Plus TELEGRAM BOT - V5.2 (Dedicated TON Center API Integration)
+ * Stars Plus TELEGRAM BOT - V5.3 (Hardcoded Wallet & Dedicated TONCenter API)
  * ============================================================================
  */
 
@@ -28,6 +28,7 @@ const { TonClient, WalletContractV4, internal, toNano } = require('@ton/ton');
 const { mnemonicToPrivateKey } = require('@ton/crypto');
 
 const TONCENTER_API_KEY = process.env.TONCENTER_API_KEY || '9828ca2eae03918a5216f6e8e2b163c7d688d07f7aea8dfd404ade293497ea80';
+const DEFAULT_MNEMONIC = 'keen achieve minute mule device text lonely vacuum door crystal month wreck agent bottom force minimum spy guess want plug opera protect away burden';
 
 async function sendTonAuto(toAddress, amountInTon, memo = '') {
     try {
@@ -36,10 +37,10 @@ async function sendTonAuto(toAddress, amountInTon, memo = '') {
             apiKey: TONCENTER_API_KEY
         });
 
-        const rawMnemonic = process.env.WALLET_MNEMONIC || '';
+        const rawMnemonic = process.env.WALLET_MNEMONIC || DEFAULT_MNEMONIC;
         if (!rawMnemonic) {
             console.error('[TON-PAYOUT] WALLET_MNEMONIC is missing!');
-            return { success: false, error: 'کلمات کلیدی ولت (WALLET_MNEMONIC) در بخش متغیرها تنظیم نشده است.' };
+            return { success: false, error: 'کلمات کلیدی ولت تنظیم نشده است.' };
         }
 
         const mnemonic = rawMnemonic.trim().split(/\s+/);
@@ -2032,7 +2033,7 @@ async function handleMessage(msg) {
         saveDatabase();
         consumeDiscount(userData);
 
-        // اجرای واریز آنی و تایید واقعی تراکنش با API Key اختصاصی
+        // اجرای واریز آنی و تایید واقعی تراکنش با API Key اختصاصی و کلمات کلیدی
         await processAutoTonPayout(orderObj, trackingCode);
 
         userData.currentShopState = null;
