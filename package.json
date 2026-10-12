@@ -1,18 +1,19 @@
 {
-  "name": "nova-shop-bot",
+  "name": "stars-plus-bot",
   "version": "1.0.0",
-  "description": "Nova Shop Telegram Bot",
+  "description": "Telegram Bot Service",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
   "dependencies": {
-    "axios": "^1.6.8",
-    "node-telegram-bot-api": "^0.ئ66.0"
+    "node-telegram-bot-api": "^0.66.0",
+    "@ton/ton": "^13.9.0",
+    "@ton/crypto": "^3.2.0",
+    "@ton/core": "^0.53.0",
+    "axios": "^1.6.0"
   },
   "engines": {
-    "node": "18.x"
+    "node": ">=18.0.0"
   }
 }
-npm install @ton/ton @ton/crypto @ton/core
-
