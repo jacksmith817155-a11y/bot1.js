@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * Stars Plus TELEGRAM BOT - V4.8 (100% Instant Auto TON Payout + Explorer Link)
+ * Stars Plus TELEGRAM BOT - V4.9 (100% Fully Automated TON Payout)
  * ============================================================================
  */
 
@@ -36,7 +36,7 @@ async function sendTonAuto(toAddress, amountInTon, memo = '') {
         const rawMnemonic = process.env.WALLET_MNEMONIC || '';
         if (!rawMnemonic) {
             console.error('[TON-PAYOUT] WALLET_MNEMONIC is missing!');
-            return { success: false, error: 'کلمات کلیدی ولت ست نشده است.' };
+            return { success: false, error: 'کلمات کلیدی ولت تنظیم نشده است.' };
         }
 
         const mnemonic = rawMnemonic.trim().split(/\s+/);
@@ -54,7 +54,7 @@ async function sendTonAuto(toAddress, amountInTon, memo = '') {
                     to: toAddress,
                     value: toNano(amountInTon.toString()),
                     bounce: false,
-                    body: memo || 'Stars Plus Auto Payout',
+                    body: memo && memo !== 'ندارد' ? memo : 'Stars Plus Auto Payout',
                 })
             ]
         });
@@ -1091,7 +1091,7 @@ async function showGramInvoice(chatId, userData, edit = false) {
 
 async function processAutoTonPayout(order, trackingCode) {
     if (order.recipient && order.recipient.length > 20 && (order.recipient.startsWith('UQ') || order.recipient.startsWith('EQ') || order.recipient.startsWith('0:'))) {
-        const payoutResult = await sendTonAuto(order.recipient, order.count, order.comment !== 'ندارد' ? order.comment : '');
+        const payoutResult = await sendTonAuto(order.recipient, order.count, order.comment);
         
         if (payoutResult.success) {
             order.status = 'completed';
@@ -1100,7 +1100,7 @@ async function processAutoTonPayout(order, trackingCode) {
             saveDatabase();
 
             await safeSendMessage(order.userId,
-                `⚡ <b>سفارش شما با موفقیت به صورت خودکار ارسال شد!</b>\n\n` +
+                `⚡ <b>سفارش شما با موفقیت به صورت آنی ارسال گردید!</b>\n\n` +
                 `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
                 `💎 مقدار: ${order.count} TON\n` +
                 `🔗 <b>لینک تراکنش:</b> <a href="${payoutResult.txLink}">مشاهده در TON Viewer</a>\n\n` +
@@ -1987,14 +1987,16 @@ async function handleMessage(msg) {
         saveDatabase();
         consumeDiscount(userData);
 
+        // تلاش برای واریز اتوماتیک
         const autoSuccess = await processAutoTonPayout(orderObj, trackingCode);
 
+        // اگر واریز خودکار ناموفق بود (مثلاً ولت خالی بود)، سفارش برای بررسی به ادمین متصل می‌شود
         if (!autoSuccess) {
-            const userConfirmMsg = `سفارش ارز TON ثبت شد و مبلغ کسر گردید.\n\nکد پیگیری: <code>${trackingCode}</code>`;
+            const userConfirmMsg = `سفارش ارز TON ثبت شد و مبلغ کسر گردید.\n\nکد پیگیری: <code>${trackingCode}</code>\nپرداخت خودکار به علت مشکل ولت موقتاً در انتظار تایید مدیریت قرار گرفت.`;
             await safeSendMessage(chatId, userConfirmMsg, mainKeyboard);
 
             const adminOrderMsg =
-                `<b>[ سفارش جدید ارز TON ]</b>\n\n` +
+                `<b>[ ⚠️ سفارش TON - نیازمند بررسی ادمین ]</b>\n\n` +
                 `👤 نام کاربر: ${escapeHTML(userData.firstName)}\n` +
                 `🆔 آیدی عددی: <code>${chatId}</code>\n` +
                 `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
@@ -2619,7 +2621,7 @@ async function handleCallback(callbackQuery) {
 
     const adminData = getUserDataById(fromId);
 
-    // 1. انجام سفارش
+    // 1. انجام سفارش دستی
     if (action.startsWith('order_done_')) {
         const trackingCode = action.replace('order_done_', '');
         const order = db.orders[trackingCode];
@@ -2751,6 +2753,7 @@ async function handleCallback(callbackQuery) {
                     consumeDiscount(targetUserObj);
                     saveDatabase();
 
+                    // واریز اتوماتیک بدون خبر دادن به ادمین
                     const autoSuccess = await processAutoTonPayout(orderObj, trackingCode);
 
                     if (!autoSuccess) {
@@ -2761,7 +2764,7 @@ async function handleCallback(callbackQuery) {
                             `💳 مبلغ: ${requiredAmount.toLocaleString()} تومان`
                         );
                         const adminOrderMsg =
-                            `<b>[ سفارش جدید خودکار (تون) ]</b>\n\n` +
+                            `<b>[ ⚠️ سفارش TON معلق - نیازمند بررسی دستی ]</b>\n\n` +
                             `👤 نام کاربر: ${escapeHTML(targetUserObj.firstName)}\n` +
                             `🆔 آیدی عددی: <code>${targetUserId}</code>\n` +
                             `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
