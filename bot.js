@@ -1,13 +1,9 @@
 /**
  * ============================================================================
- * Stars Plus TELEGRAM BOT - V4.6 (Complete, Bug-Free, Auto-Order on Balance Approval)
- * + BrsApi live prices (Tether & TON) with 8% margin
- * + Colored buttons (style: success / danger / primary)
- * + Channel report button deep-links into the bot with /start buy
+ * Stars Plus TELEGRAM BOT - V4.7 (Complete, Auto-TON Payout, Tonviewer Link)
  * ============================================================================
  */
 
-// ---- محافظ خطا: قبل از هر چیز ثبت می‌شود تا ربات با یک خطای ناگهانی خاموش نشود ----
 process.on('uncaughtException', (err) => {
     console.error('[FATAL-GUARD] Uncaught Exception:', err && err.stack ? err.stack : err);
 });
@@ -19,14 +15,62 @@ let TelegramModule;
 try {
     TelegramModule = require('node-telegram-bot-api');
 } catch (e) {
-    console.error('[FATAL] پکیج node-telegram-bot-api نصب نیست. در package.json بخش dependencies این پکیج باید باشد (npm install node-telegram-bot-api).');
-    console.error(e && e.message ? e.message : e);
+    console.error('[FATAL] پکیج node-telegram-bot-api نصب نیست.');
     process.exit(1);
 }
 const fs = require('fs');
 const https = require('https');
 const http = require('http');
 const path = require('path');
+
+// ---- TON SDK INTEGRATION FOR AUTOMATIC PAYOUTS ----
+const { TonClient, WalletContractV4, internal, toNano } = require('@ton/ton');
+const { mnemonicToPrivateKey } = require('@ton/crypto');
+
+async function sendTonAuto(toAddress, amountInTon, memo = '') {
+    try {
+        const client = new TonClient({
+            endpoint: 'https://toncenter.com/api/v2/jsonRPC'
+        });
+
+        const rawMnemonic = process.env.WALLET_MNEMONIC || '';
+        if (!rawMnemonic) {
+            console.error('[TON-PAYOUT] WALLET_MNEMONIC is missing in environment variables.');
+            return { success: false, error: 'کلید کیف پول ولت ست نشده است.' };
+        }
+
+        const mnemonic = rawMnemonic.trim().split(/\s+/);
+        const key = await mnemonicToPrivateKey(mnemonic);
+        const wallet = WalletContractV4.create({ publicKey: key.publicKey, workchain: 0 });
+        
+        const contract = client.open(wallet);
+        const seqno = await contract.getSeqno();
+
+        const transfer = contract.createTransfer({
+            seqno: seqno,
+            secretKey: key.secretKey,
+            messages: [
+                internal({
+                    to: toAddress,
+                    value: toNano(amountInTon.toString()),
+                    bounce: false,
+                    body: memo || 'Stars Plus Auto Payout',
+                })
+            ]
+        });
+
+        await contract.send(transfer);
+
+        // محاسبه تقریبی یا ساخت لینک پیگیری
+        const txHash = transfer.hash().toString('hex');
+        const txLink = `https://tonviewer.com/transaction/${txHash}`;
+
+        return { success: true, txHash, txLink };
+    } catch (err) {
+        console.error('[TON-PAYOUT-ERROR]', err);
+        return { success: false, error: err.message };
+    }
+}
 
 // ============================================================================
 // RENDER WEB SERVICE PORT BINDING SERVER
@@ -49,7 +93,6 @@ server.listen(PORT, () => {
 // ENTERPRISE CONFIGURATION & CONSTANTS
 // ============================================================================
 
-// ⚠️ توکن جدید ربات
 const TOKEN = (process.env.BOT_TOKEN || process.env.TOKEN || '8696660217:AAEBI6iOD-OAZpWbCIGy2KU-s-Fc5OQwwVE')
     .toString().trim().replace(/^["']|["']$/g, '');
 const TOKEN_LOOKS_VALID = /^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(TOKEN);
@@ -65,11 +108,9 @@ const CARD_NUMBER = '6219861452862914';
 const CARD_OWNER = 'شنتیا زاهد پور';
 
 const STAR_USD = 0.015;
-
 const FALLBACK_USDT_TOMAN = 65000;
 const FALLBACK_GRAM_TOMAN = 311591;
 
-// دکمه‌های پنل مدیریت (یک منبع واحد برای کیبورد و تشخیص دکمه)
 const BTN = {
     ADD: '➕ افزایش موجودی کاربر',
     SUB: '➖ کاهش موجودی کاربر',
@@ -85,17 +126,12 @@ const BTN = {
     BACK: '🔙 بازگشت به منوی اصلی'
 };
 
-// حذف کاراکترهای نامرئی برای مقایسه مطمئن دکمه‌ها
 function norm(s) {
     return (s || '').toString().replace(/[\uFE0E\uFE0F\u200B-\u200F\u202A-\u202E]/g, '').replace(/\s+/g, ' ').trim();
 }
 function isBtn(text, label) {
     return !!text && norm(text) === norm(label);
 }
-
-// ============================================================================
-// SYSTEM LOGGING UTILITY
-// ============================================================================
 
 class SystemLogger {
     static info(context, message) {
@@ -111,10 +147,6 @@ class SystemLogger {
         }
     }
 }
-
-// ============================================================================
-// BOT INITIALIZATION
-// ============================================================================
 
 const TelegramBot = typeof TelegramModule === 'function'
     ? TelegramModule
@@ -138,9 +170,6 @@ const bot = new TelegramBot(TOKEN, {
     filepath: false
 });
 
-// ============================================================================
-// دکمه‌های رنگی (style) و یوزرنیم ربات برای لینک خودکار
-// ============================================================================
 let BOT_USERNAME = '';
 
 function pickButtonStyle(label) {
@@ -184,7 +213,7 @@ bot.on('polling_error', (err) => {
     if (/\b(404|401)\b/.test(m)) {
         if (!fatalPollingHandled) {
             fatalPollingHandled = true;
-            SystemLogger.error('Polling', '❌ تلگرام توکن را رد کرد (404/401).', err);
+            SystemLogger.error('Polling', '❌ تلگرام توکن را رد کرد.', err);
             try { bot.stopPolling(); } catch (e) {}
         }
         return;
@@ -292,12 +321,13 @@ function getUserDataTemplate() {
         gramPricePerUnit: 0,
         gramWalletAddress: '',
         gramMemo: 'ندارد',
+        tonOrderMode: 'wallet', // 'wallet' یا 'account'
 
         lastReceiptPhotoId: null,
         lastReceiptCode: null,
         lastReceiptAmount: 0,
         lastReceiptTime: '',
-        pendingOrderToAutoPlace: null, // نگهداری سفارش معلق برای ثبت خودکار پس از تایید واریز
+        pendingOrderToAutoPlace: null,
 
         waitingForAdminUserSearch: false,
         waitingForAdminAmount: false,
@@ -365,11 +395,6 @@ function saveDatabase() {
 }
 
 loadDatabase();
-SystemLogger.info('System', 'Nova Shop Bot is running with all updates!');
-
-// ============================================================================
-// USER STATE
-// ============================================================================
 
 function getUserDataById(userId) {
     if (!db.users[userId]) {
@@ -428,10 +453,6 @@ function resetAdminFlags(adminData) {
     adminData.waitingForManualStarPrice = false;
     adminData.waitingForManualGiftBasePrice = false;
 }
-
-// ============================================================================
-// MESSAGING & UI UTILITIES
-// ============================================================================
 
 function escapeHTML(text) {
     if (!text) return '';
@@ -561,7 +582,7 @@ function getFormattedTime() {
     return `${y}/${m}/${d} ${hh}:${mm}:${ss}`;
 }
 
-async function sendChannelReport(order) {
+async function sendChannelReport(order, txLink = null) {
     try {
         const userIdStr = order.userId.toString();
         let maskedUserId = userIdStr;
@@ -575,27 +596,33 @@ async function sendChannelReport(order) {
 
         const formattedTime = getFormattedTime();
 
-        const reportMsg =
+        let reportMsg =
             `گزارشات | نوا شاپ\n` +
             `گزارش #خرید_موفق 🛍\n\n` +
             `👤 خریدار: <code>${maskedUserId}</code>\n` +
             `🛒 سفارش: ${escapeHTML(order.giftName)}\n` +
-            `💳 مبلغ پرداخت شده: ${order.amount.toLocaleString()} تومان\n\n` +
-            `🕰 ${formattedTime}\n` +
-            `🐺 @nova1_shopp`;
+            `💳 مبلغ پرداخت شده: ${order.amount.toLocaleString()} تومان\n\n`;
 
-        // دکمه سبز؛ با کلیک، ربات باز شده و /start buy به‌صورت خودکار ارسال می‌شود
+        if (txLink) {
+            reportMsg += `🔗 <a href="${txLink}">مشاهده تراکنش در TON Viewer</a>\n\n`;
+        }
+
+        reportMsg += `🕰 ${formattedTime}\n🐺 @nova1_shopp`;
+
         const botLink = BOT_USERNAME
             ? `https://t.me/${BOT_USERNAME}?start=buy`
             : 'https://t.me/nova1_shopp';
 
+        const inlineKb = [
+            [{ text: '🤖 | برای خرید اقدام کن!', url: botLink, style: 'success' }]
+        ];
+        if (txLink) {
+            inlineKb.unshift([{ text: '🔍 مشاهده تراکنش (Tonviewer)', url: txLink }]);
+        }
+
         await bot.sendMessage(REPORT_CHANNEL, reportMsg, {
             parse_mode: 'HTML',
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: '🤖 | برای خرید اقدام کن!', url: botLink, style: 'success' }]
-                ]
-            }
+            reply_markup: { inline_keyboard: inlineKb }
         });
         return null;
     } catch (err) {
@@ -604,9 +631,6 @@ async function sendChannelReport(order) {
     }
 }
 
-// ============================================================================
-// FORCE JOIN
-// ============================================================================
 async function checkMembership(userId) {
     try {
         for (const channel of FORCE_JOIN_CHANNELS) {
@@ -621,10 +645,6 @@ async function checkMembership(userId) {
         return false;
     }
 }
-
-// ============================================================================
-// DISCOUNT HELPERS
-// ============================================================================
 
 function discountTypeForState(state) {
     if (state === 'star_invoice') return 'stars';
@@ -662,12 +682,9 @@ function consumeDiscount(userData) {
     saveDatabase();
 }
 
-// ============================================================================
-// FINANCIAL API INTEGRATIONS - BRSAPI (LIVE) + سود ۸٪
-// ============================================================================
 const BRSAPI_URL = 'https://Api.BrsApi.ir/Market/Cryptocurrency.php?key=BrcH3cX7vcbuX9tE7Pr8dJGsjkeKKJTt';
-const PRICE_MARGIN = 1.08;            // سود ۸٪ روی تون (گرام) و استارز
-const MARKET_CACHE_TTL_MS = 2000;     // قیمت‌ها هر ۲ ثانیه تازه می‌شوند
+const PRICE_MARGIN = 1.08;
+const MARKET_CACHE_TTL_MS = 2000;
 const MARKET_FETCH_TIMEOUT_MS = 4000;
 
 const MARKET_MATCH = {
@@ -722,7 +739,6 @@ function parseMarket(payload) {
     const ton = findMarketItem(list, MARKET_MATCH.ton);
     const usdc = findMarketItem(list, MARKET_MATCH.usdc);
 
-    // قیمت تتر به تومان: مستقیم از API؛ اگر صفر بود، از نرخ دلار (USDC) محاسبه می‌شود
     let usdtToman = tether ? toNumber(tether.price_toman) : 0;
     if (usdtToman <= 0 && tether && usdc && toNumber(usdc.price) > 0 && toNumber(usdc.price_toman) > 0) {
         usdtToman = toNumber(tether.price) * (toNumber(usdc.price_toman) / toNumber(usdc.price));
@@ -763,13 +779,11 @@ async function getMarket() {
     return marketInFlight;
 }
 
-// قیمت واقعی تتر به تومان (بدون سود)
 async function getUsdtTomanPrice() {
     const m = await getMarket();
     return m && m.usdtToman > 0 ? m.usdtToman : FALLBACK_USDT_TOMAN;
 }
 
-// قیمت فروش تون به تومان (واقعی × ۱.۰۸)؛ نام قدیمی حفظ شده تا بقیه کد کار کند
 async function getBinanceTONPriceInToman() {
     if (db.manualTonPrice && db.manualTonPrice > 0) {
         return db.manualTonPrice;
@@ -781,7 +795,6 @@ async function getBinanceTONPriceInToman() {
     return FALLBACK_GRAM_TOMAN;
 }
 
-// قیمت فروش هر استارز = ۰.۰۱۵ تتر × قیمت تتر × ۱.۰۸
 async function fetchStarsPrice() {
     if (db.manualStarPrice && db.manualStarPrice > 0) {
         return db.manualStarPrice;
@@ -790,7 +803,6 @@ async function fetchStarsPrice() {
     return Math.round(STAR_USD * usdtToman * PRICE_MARGIN);
 }
 
-// قیمت گرام = قیمت فروش تون (گرام همان تون است)
 async function fetchGramData() {
     const finalPrice = await getBinanceTONPriceInToman();
     const m = await getMarket();
@@ -800,10 +812,6 @@ async function fetchGramData() {
         usdtToman: m ? m.usdtToman : FALLBACK_USDT_TOMAN
     };
 }
-
-// ============================================================================
-// KEYBOARDS
-// ============================================================================
 
 function getMainKeyboard(isAdmin) {
     let rows = [
@@ -818,14 +826,16 @@ function getMainKeyboard(isAdmin) {
     return { reply_markup: { keyboard: rows, resize_keyboard: true, is_persistent: true } };
 }
 
+// کیبورد محصولات طبق عکس[span_3](start_span)[span_3](end_span)
 function getShopKeyboard() {
     return {
         reply_markup: {
             keyboard: [
-                [{ text: '📦 سفارش های اخیر من' }],
-                [{ text: '⭐️ استارز' }],
-                [{ text: '💠 خرید ارز گرام ( GRAM )' }],
-                [{ text: '🎁 گیفت استارزی' }],
+                [{ text: 'سفارش های اخیر من 📥' }],
+                [{ text: 'خرید ارز تون 💎' }],
+                [{ text: 'استارز ⭐️' }],
+                [{ text: 'گیفت استارزی 🎁' }],
+                [{ text: 'شارژ تون بالانس ⚡' }],
                 [{ text: 'برگشت ↩️' }]
             ],
             resize_keyboard: true
@@ -870,10 +880,6 @@ function getAdminPanelKeyboard() {
         }
     };
 }
-
-// ============================================================================
-// INVOICES & DISCOUNT PRICING
-// ============================================================================
 
 function clearDiscount(userData) {
     userData.appliedDiscountCode = null;
@@ -1064,11 +1070,13 @@ async function showGramInvoice(chatId, userData, edit = false) {
     userData.lastAmount = c.final;
     saveDatabase();
 
+    const targetType = userData.tonOrderMode === 'account' ? 'شارژ اکانت تلگرام' : `ولت شخصی (<code>${escapeHTML(userData.gramWalletAddress)}</code>)`;
+
     const invoiceMsg =
-        `<b>[ فاکتور خرید ارز گرام ( GRAM ) ]</b>\n\n` +
-        `مقدار خرید: ${userData.gramAmount} گرام\n` +
-        `آدرس ولت: <code>${escapeHTML(userData.gramWalletAddress)}</code>\n` +
-        `کامنت (مم): ${escapeHTML(userData.gramMemo)}\n\n` +
+        `<b>[ فاکتور خرید ارز تون ( TON ) ]</b>\n\n` +
+        `مقدار خرید: ${userData.gramAmount} TON\n` +
+        `مقصد واریز: ${targetType}\n` +
+        `کامنت (ممو): ${escapeHTML(userData.gramMemo)}\n\n` +
         priceBlock(c, '💰 مبلغ فاکتور') +
         `\nمبلغ نهایی: <b>${c.final.toLocaleString()} تومان</b>\n\n` +
         `در صورتی که جزئیات بالا مورد تأیید شماست ، روی دکمه تایید کلیک کنید.`;
@@ -1081,6 +1089,38 @@ async function showGramInvoice(chatId, userData, edit = false) {
         userData.lastInvoiceMessageId = sent.message_id;
         saveDatabase();
     }
+}
+
+// تابع پردازش خودکار تسویه یا ارسال لایو تون
+async function processAutoTonPayout(order, trackingCode) {
+    const userObj = getUserDataById(order.userId);
+    
+    // اگر واریز به ولت شخصی بود
+    if (order.recipient && order.recipient.length > 20 && (order.recipient.startsWith('UQ') || order.recipient.startsWith('EQ') || order.recipient.startsWith('0:'))) {
+        const payoutResult = await sendTonAuto(order.recipient, order.count, order.comment !== 'ندارد' ? order.comment : '');
+        
+        if (payoutResult.success) {
+            order.status = 'completed';
+            order.txHash = payoutResult.txHash;
+            order.txLink = payoutResult.txLink;
+            saveDatabase();
+
+            await safeSendMessage(order.userId,
+                `⚡ <b>سفارش شما با موفقیت به صورت خودکار ارسال شد!</b>\n\n` +
+                `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
+                `💎 مقدار: ${order.count} TON\n` +
+                `🔗 <b>لینک تراکنش:</b> <a href="${payoutResult.txLink}">مشاهده در TON Viewer</a>\n\n` +
+                `با تشکر از خرید شما!`
+            );
+
+            await sendChannelReport(order, payoutResult.txLink);
+            return true;
+        } else {
+            // در صورت بروز خطا در شبکه، به عنوان pending برای ادمین فرستاده می‌شود
+            SystemLogger.error('TON-AUTO-PAYOUT', `Auto payout failed for ${trackingCode}: ${payoutResult.error}`);
+        }
+    }
+    return false;
 }
 
 // ============================================================================
@@ -1193,7 +1233,7 @@ async function handleMessage(msg) {
                 reply_markup: {
                     keyboard: [
                         [{ text: 'محاسبه با موجودی من 🔄' }],
-                        [{ text: 'برگشت ↩' }]
+                        [{ text: 'برگشت ↩️' }]
                     ],
                     resize_keyboard: true
                 }
@@ -1203,7 +1243,14 @@ async function handleMessage(msg) {
         } else {
             userData.currentShopState = 'main_shop';
             saveDatabase();
-            await safeSendMessage(chatId, 'وقته محصول رو انتخاب کنی !\n\n🚀 تمامی سفارشات با بالاترین سرعت انجام میشن !', getShopKeyboard());
+            
+            // فرم متنی خرید محصول طبق تصویر[span_4](start_span)[span_4](end_span)
+            const shopMsg = 
+                `🛒 **وقتشه محصولت رو انتخاب کنی !**\n\n` +
+                `🚀 تمامی سفارشات با بالاترین سرعت و همراه با پشتیبانی کامل انجام می‌شن تا تجربه‌ای مطمئن و بی‌دغدغه داشته باشی !\n\n` +
+                `🫶 **از لیست زیر ، گزینه مورد نظرت رو انتخاب کن :**`;
+
+            await safeSendMessage(chatId, shopMsg, getShopKeyboard());
             return;
         }
     }
@@ -1327,7 +1374,6 @@ async function handleMessage(msg) {
         }
         if (receiptCode) db.processedReceipts[receiptCode] = 'rejected';
 
-        // پاکسازی سفارش معتبری که برای این افزایش موجودی منتظر بود
         const targetUserObj = getUserDataById(targetUserId);
         targetUserObj.pendingOrderToAutoPlace = null;
         saveDatabase();
@@ -1572,27 +1618,39 @@ async function handleMessage(msg) {
         return;
     }
 
+    // ورودی تعداد تون در جریان خرید تون
     if (userData.waitingForGramAmount && text) {
         if (text === 'محاسبه با موجودی من 🔄') {
             const liveGramData = await fetchGramData();
             userData.gramPricePerUnit = liveGramData.finalPrice;
             saveDatabase();
             const balanceGram = (userData.wallet / userData.gramPricePerUnit).toFixed(2);
-            await safeSendMessage(chatId, `موجودی شما: ${userData.wallet.toLocaleString()} تومان\nمعادل ${balanceGram} گرام.\nلطفاً تعداد گرام را وارد کنید:`, backKeyboard);
+            await safeSendMessage(chatId, `موجودی شما: ${userData.wallet.toLocaleString()} تومان\nمعادل ${balanceGram} TON.\nلطفاً تعداد تون را وارد کنید:`, backKeyboard);
             return;
         }
 
         const gramInput = parseFloat(text);
         if (isNaN(gramInput) || gramInput < 0.1) {
-            await safeSendMessage(chatId, '❌ حداقل خرید ۰.۱ گرام است.', backKeyboard);
+            await safeSendMessage(chatId, '❌ حداقل خرید ۰.۱ TON است.', backKeyboard);
             return;
         }
         userData.gramAmount = gramInput;
         userData.waitingForGramAmount = false;
+
+        // اگر واریز مستقیم به اکانت تلگرام بود
+        if (userData.tonOrderMode === 'account') {
+            userData.gramWalletAddress = msg.from.username || msg.from.id.toString();
+            userData.gramMemo = 'واریز به اکانت تلگرام';
+            userData.currentShopState = 'gram_invoice';
+            saveDatabase();
+            await showGramInvoice(chatId, userData);
+            return;
+        }
+
         userData.waitingForGramWallet = true;
         saveDatabase();
 
-        await safeSendMessage(chatId, `لطفاً آدرس ولت گرام خود را ارسال کنید:`, backKeyboard);
+        await safeSendMessage(chatId, `لطفاً آدرس ولت (Tonkeeper) خود را ارسال کنید:`, backKeyboard);
         return;
     }
 
@@ -1619,7 +1677,7 @@ async function handleMessage(msg) {
                 resize_keyboard: true
             }
         };
-        await safeSendMessage(chatId, 'آیا برای واریز گرام کامنت (ممو) دارید؟', memoKeyboard);
+        await safeSendMessage(chatId, 'آیا برای واریز TON کامنت (ممو) دارید؟', memoKeyboard);
         return;
     }
 
@@ -1664,7 +1722,11 @@ async function handleMessage(msg) {
         if (order.status === 'completed') statusStr = 'انجام شده و تکمیل شده';
         if (order.status === 'rejected') statusStr = 'رد شده توسط مدیریت';
 
-        const trackResultMsg = `<b>[ نتیجه پیگیری سفارش ]</b>\n\nکد: <code>${escapeHTML(trackingCode)}</code>\nمحصول: ${escapeHTML(order.giftName)}\nمبلغ: ${order.amount.toLocaleString()} تومان\nوضعیت: ${statusStr}`;
+        let trackResultMsg = `<b>[ نتیجه پیگیری سفارش ]</b>\n\nکد: <code>${escapeHTML(trackingCode)}</code>\nمحصول: ${escapeHTML(order.giftName)}\nمبلغ: ${order.amount.toLocaleString()} تومان\nوضعیت: ${statusStr}`;
+        if (order.txLink) {
+            trackResultMsg += `\n\n🔗 <a href="${order.txLink}">مشاهده لینک تراکنش (Tonviewer)</a>`;
+        }
+
         await safeSendMessage(chatId, trackResultMsg, backKeyboard);
         return;
     }
@@ -1677,7 +1739,6 @@ async function handleMessage(msg) {
         return;
     }
 
-    // ---------------- Smart Support (AI) Section ----------------
     if (userData.waitingForSmartSupport && text) {
         if (text === '🔙 بازگشت به منوی اصلی' || text === 'برگشت ↩️') {
             userData.waitingForSmartSupport = false;
@@ -1691,16 +1752,16 @@ async function handleMessage(msg) {
 
         if (userQ.includes('استارز') || userQ.includes('star')) {
             aiReply = "⭐ برای خرید استارز، از منوی اصلی به بخش «خرید محصول» و سپس «استارز» بروید. تعداد مورد نظر را انتخاب کرده و آیدی دریافت‌کننده را وارد کنید. فاکتور صادر شده و پس از تأیید و کسر مبلغ از موجودی، در سریع‌ترین زمان توسط مدیریت اعمال می‌شود.";
-        } else if (userQ.includes('گرام') || userQ.includes('gram')) {
-            aiReply = "💠 برای خرید ارز گرام، به بخش محصولات رفته، مقدار گرام را وارد کنید، آدرس ولت خود و در صورت نیاز ممو (کامنت) را ثبت کنید تا فاکتور نهایی صادر شود.";
+        } else if (userQ.includes('گرام') || userQ.includes('gram') || userQ.includes('تون')) {
+            aiReply = "💠 برای خرید ارز تون (TON)، به بخش محصولات رفته، یکی از گزینه‌های واریز به ولت شخصی یا شارژ مستقیم اکانت را انتخاب کرده، مقدار را وارد کنید تا فاکتور نهایی صادر و تراکنش ثبت شود.";
         } else if (userQ.includes('گیفت') || userQ.includes('gift')) {
             aiReply = "🎁 گیفت‌های استارزی شامل انواع عادی (مثل قلب، تدی، کادو و...) هستند که می‌توانید با انتخاب محصول و تعیین دریافت‌کننده، آن‌ها را سفارش دهید.";
         } else if (userQ.includes('رسید') || userQ.includes('واریز') || userQ.includes('افزایش موجودی')) {
             aiReply = "💳 برای افزایش موجودی، از منوی اصلی روی «➕ افزایش موجودی» کلیک کنید، مبلغ را به تومان وارد نمایید، به شماره کارت اعلام شده واریز کرده و عکس رسید را در ربات بفرستید تا پس از بررسی مدیریت، موجودی‌تان شارژ شود.";
         } else if (userQ.includes('پیگیری') || userQ.includes('سفارش')) {
-            aiReply = "📦 برای پیگیری سفارشات خود می‌توانید از گزینه «📦 پیگیری سفارش» در منوی اصلی استفاده کرده و کد پیگیری خود را ارسال کنید تا وضعیت آن (معلق، تکمیل یا رد شده) را مشاهده کنید.";
+            aiReply = "📦 برای پیگیری سفارشات خود می‌توانید از گزینه «📦 پیگیری سفارش» در منوی اصلی استفاده کرده و کد پیگیری خود را ارسال کنید تا وضعیت آن را مشاهده کنید.";
         } else if (userQ.includes('اعتماد') || userQ.includes('امنیت')) {
-            aiReply = "❤️ نوا شاپ با سابقه درخشان و رضایت هزاران مشتری فعال به صورت کاملاً امن فعالیت می‌کند. کانال رضایت و اعتماد ما در ربات بخش مشخصی دارد.";
+            aiReply = "❤️ نوا شاپ با سابقه درخشان و رضایت هزاران مشتری فعال به صورت کاملاً امن فعالیت می‌کند.";
         }
 
         await safeSendMessage(chatId, `🤖 <b>پشتیبانی هوشمند نوا شاپ:</b>\n\n${aiReply}`, {
@@ -1714,7 +1775,6 @@ async function handleMessage(msg) {
         return;
     }
 
-    // ---------------- Discount code input & live invoice edit ----------------
     if (userData.waitingForDiscountInput && text) {
         userData.waitingForDiscountInput = false;
         saveDatabase();
@@ -1740,7 +1800,6 @@ async function handleMessage(msg) {
         userData.appliedDiscountPercent = result.obj.percent;
         saveDatabase();
 
-        // ویرایش زنده فاکتور و اعمال قیمت جدید با خط زدن قیمت قبلی
         await showFn(chatId, userData, true);
         await safeSendMessage(chatId, `✅ کد تخفیف ${result.obj.percent}% با موفقیت روی فاکتور شما اعمال شد.`, invoiceKb);
         return;
@@ -1772,7 +1831,6 @@ async function handleMessage(msg) {
     const shortageReply = async (orderType, orderDetails) => {
         const shortage = userData.lastAmount - userData.wallet;
 
-        // ذخیره اطلاعات سفارش در صف انتظار کاربر تا پس از تأیید واریز به صورت خودکار ثبت شود
         userData.pendingOrderToAutoPlace = {
             type: orderType,
             ...orderDetails
@@ -1902,6 +1960,7 @@ async function handleMessage(msg) {
         return;
     }
 
+    // تایید سفارش ارز TON
     if (text === '✅ تایید گرام' && userData.currentShopState === 'gram_invoice') {
         if (!(await revalidateAppliedDiscount(chatId, userData, showGramInvoice))) return;
         userData.lastAmount = (await calcGram(userData)).final;
@@ -1911,19 +1970,20 @@ async function handleMessage(msg) {
             await shortageReply('gram', {
                 gramAmount: userData.gramAmount,
                 gramWalletAddress: userData.gramWalletAddress,
-                gramMemo: userData.gramMemo
+                gramMemo: userData.gramMemo,
+                tonOrderMode: userData.tonOrderMode
             });
             return;
         }
 
         userData.wallet -= userData.lastAmount;
-        const trackingCode = 'GRAM-' + Math.floor(10000 + Math.random() * 90000);
+        const trackingCode = 'TON-' + Math.floor(10000 + Math.random() * 90000);
         const now = getFormattedTime();
 
-        db.orders[trackingCode] = {
+        const orderObj = {
             userId: chatId,
             firstName: userData.firstName,
-            giftName: `ارز گرام (${userData.gramAmount} GRAM)`,
+            giftName: `ارز تون (${userData.gramAmount} TON)`,
             count: userData.gramAmount,
             recipient: userData.gramWalletAddress,
             comment: userData.gramMemo,
@@ -1931,26 +1991,34 @@ async function handleMessage(msg) {
             time: now,
             status: 'pending'
         };
+
+        db.orders[trackingCode] = orderObj;
         userData.lastInvoiceMessageId = null;
         userData.pendingOrderToAutoPlace = null;
         saveDatabase();
         consumeDiscount(userData);
 
-        const userConfirmMsg = `سفارش گرام ثبت شد و مبلغ کسر گردید.\n\nکد پیگیری: <code>${trackingCode}</code>`;
-        await safeSendMessage(chatId, userConfirmMsg, mainKeyboard);
+        // تلاش برای واریز اتوماتیک
+        const autoSuccess = await processAutoTonPayout(orderObj, trackingCode);
 
-        const adminOrderMsg =
-            `<b>[ سفارش جدید ارز گرام ]</b>\n\n` +
-            `👤 نام کاربر: ${escapeHTML(userData.firstName)}\n` +
-            `🆔 آیدی عددی: <code>${chatId}</code>\n` +
-            `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
-            `💠 مقدار گرام: ${userData.gramAmount}\n` +
-            `📫 آدرس ولت: <code>${escapeHTML(userData.gramWalletAddress)}</code>\n` +
-            `💬 ممو / کامنت: ${escapeHTML(userData.gramMemo)}\n` +
-            `💰 مبلغ کل: ${db.orders[trackingCode].amount.toLocaleString()} تومان\n` +
-            `⏰ زمان ثبت: ${now}`;
+        if (!autoSuccess) {
+            const userConfirmMsg = `سفارش ارز TON ثبت شد و مبلغ کسر گردید.\n\nکد پیگیری: <code>${trackingCode}</code>`;
+            await safeSendMessage(chatId, userConfirmMsg, mainKeyboard);
 
-        await notifyAdmins(adminOrderMsg, adminOrderMarkupFor(trackingCode));
+            const adminOrderMsg =
+                `<b>[ سفارش جدید ارز TON ]</b>\n\n` +
+                `👤 نام کاربر: ${escapeHTML(userData.firstName)}\n` +
+                `🆔 آیدی عددی: <code>${chatId}</code>\n` +
+                `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
+                `💎 مقدار: ${userData.gramAmount} TON\n` +
+                `📫 مقصد: <code>${escapeHTML(userData.gramWalletAddress)}</code>\n` +
+                `💬 ممو / کامنت: ${escapeHTML(userData.gramMemo)}\n` +
+                `💰 مبلغ کل: ${db.orders[trackingCode].amount.toLocaleString()} تومان\n` +
+                `⏰ زمان ثبت: ${now}`;
+
+            await notifyAdmins(adminOrderMsg, adminOrderMarkupFor(trackingCode));
+        }
+
         userData.currentShopState = null;
         saveDatabase();
         return;
@@ -2128,9 +2196,78 @@ async function handleMessage(msg) {
     if (text === '🛒 خرید محصول') {
         userData.currentShopState = 'main_shop';
         saveDatabase();
-        await safeSendMessage(chatId, 'وقته محصول رو انتخاب کنی !', getShopKeyboard());
+
+        // فرم متنی خرید محصول طبق عکس[span_5](start_span)[span_5](end_span)
+        const shopMsg = 
+            `🛒 **وقتشه محصولت رو انتخاب کنی !**\n\n` +
+            `🚀 تمامی سفارشات با بالاترین سرعت و همراه با پشتیبانی کامل انجام می‌شن تا تجربه‌ای مطمئن و بی‌دغدغه داشته باشی !\n\n` +
+            `🫶 **از لیست زیر ، گزینه مورد نظرت رو انتخاب کن :**`;
+
+        await safeSendMessage(chatId, shopMsg, getShopKeyboard());
     }
-    else if (text === '⭐️ استارز' || text === '⭐ استارز تلگرام (Telegram Stars)' || isBtn(text, '⭐️ استارز')) {
+    // دکمه خرید ارز تون در منوی اصلی[span_6](start_span)[span_6](end_span)[span_7](start_span)[span_7](end_span)
+    else if (text === 'خرید ارز تون 💎' || isBtn(text, 'خرید ارز تون 💎')) {
+        clearDiscount(userData);
+        userData.currentShopState = 'ton_select_mode';
+        saveDatabase();
+
+        const tonMsg =
+            `🚀 **خرید ارز تون ( GRAM )**\n\n` +
+            `💎 با خرید TON از استارزیفای ، پرداخت سرویس‌های تلگرام را بدون دردسر انجام دهید؛ از پرمیوم و استارز تا گیفت NFT و سایر امکانات.\n\n` +
+            `• لطفاً یکی از 2 روش خرید زیر را بر اساس نیاز خود انتخاب کنید :\n\n` +
+            `💎 **واریز به ولت شخصی**\n` +
+            `ارسال مستقیم ارز TON به کیف پول ( ولت ) شخصی شما (مانند Tonkeeper)\n\n` +
+            `🌐 **شارژ مستقیم اکانت تلگرام**\n` +
+            `واریز مستقیم ارز TON به موجودی حساب ( اکانت ) تلگرام شما\n\n` +
+            `⚡ **برای ادامه خرید ، روش دریافت TON را انتخاب کنید :**`;
+
+        const tonModeMarkup = {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '💎 واریز به ولت شخصی', callback_data: 'ton_mode_wallet' }],
+                    [{ text: '⚡ شارژ مستقیم اکانت تلگرام', callback_data: 'ton_mode_account' }]
+                ]
+            }
+        };
+
+        await safeSendMessage(chatId, tonMsg, tonModeMarkup);
+    }
+    // دکمه شارژ تون بالانس طبق عکس[span_8](start_span)[span_8](end_span)[span_9](start_span)[span_9](end_span)
+    else if (text === 'شارژ تون بالانس ⚡' || isBtn(text, 'شارژ تون بالانس ⚡')) {
+        clearDiscount(userData);
+        userData.currentShopState = 'gram_wallet_flow';
+        userData.tonOrderMode = 'account';
+        saveDatabase();
+
+        const freshData = await fetchGramData();
+        const balanceMsg =
+            `⚡ **شارژ تون بالانس**\n\n` +
+            `🔴 با شارژ تون بالانس ، می‌توانید موجودی تون اکانت خود را افزایش دهید و به راحتی گیفت ( NFT ) از مارکت تلگرام خریداری کنید !\n\n` +
+            `💫 **مزایای شارژ بالانس :**\n` +
+            `💰 اضافه شدن موجودی به اکانت شما\n` +
+            `🎁 امکان خرید گیفت‌ها و سایر سرویس‌ها بدون محدودیت\n` +
+            `🔒 کاملاً امن و قانونی\n` +
+            `⚡ تراکنش بدون نیاز به ورود به اکانت و فقط با آیدی شما\n\n` +
+            `⚡ شارژ بالانس به صورت سریع و لحظه‌ای انجام می‌شود ~_~\n\n` +
+            `📊 **قیمت هر تون:** ${freshData.finalPrice.toLocaleString()} تومان\n` +
+            `📊 **حداقل خرید:** 1 تون\n\n` +
+            `🎶 **لطفاً تعداد تون مورد نظر خود را وارد کنید :**`;
+
+        const balanceKb = {
+            reply_markup: {
+                keyboard: [
+                    [{ text: 'محاسبه با موجودی من 🔄' }],
+                    [{ text: 'برگشت ↩️' }]
+                ],
+                resize_keyboard: true
+            }
+        };
+
+        userData.waitingForGramAmount = true;
+        saveDatabase();
+        await safeSendMessage(chatId, balanceMsg, balanceKb);
+    }
+    else if (text === 'استارز ⭐️' || text === '⭐️ استارز' || isBtn(text, 'استارز ⭐️')) {
         clearDiscount(userData);
         userData.currentShopState = 'star_menu';
         userData.waitingForStarCount = true;
@@ -2156,28 +2293,7 @@ async function handleMessage(msg) {
         };
         await safeSendPhoto(chatId, '1000002624.jpg', { caption: starMsg, reply_markup: starMenuKeyboard.reply_markup });
     }
-    else if (text === '💠 خرید ارز گرام ( GRAM )') {
-        clearDiscount(userData);
-        userData.currentShopState = 'gram_wallet_flow';
-        saveDatabase();
-        const gramData = await fetchGramData();
-        userData.gramPricePerUnit = gramData.finalPrice;
-        saveDatabase();
-
-        const gramWalletFlowKeyboard = {
-            reply_markup: {
-                keyboard: [
-                    [{ text: 'محاسبه با موجودی من 🔄' }],
-                    [{ text: 'برگشت ↩️' }]
-                ],
-                resize_keyboard: true
-            }
-        };
-        await safeSendMessage(chatId, `تعداد گرام مورد نظر را وارد کنید:`, gramWalletFlowKeyboard);
-        userData.waitingForGramAmount = true;
-        saveDatabase();
-    }
-    else if (text === '🎁 گیفت استارزی' || text === '🎁 گیفت‌های استارزی') {
+    else if (text === 'گیفت استارزی 🎁' || text === '🎁 گیفت استارزی') {
         userData.currentShopState = 'gift_category';
         saveDatabase();
 
@@ -2367,7 +2483,7 @@ async function handleMessage(msg) {
 }
 
 // ============================================================================
-// INLINE CALLBACK QUERY HANDLER (100% FIXED & ROBUST)
+// INLINE CALLBACK QUERY HANDLER
 // ============================================================================
 
 bot.on('callback_query', async (callbackQuery) => {
@@ -2393,6 +2509,18 @@ async function handleCallback(callbackQuery) {
     const chatId = msg.chat.id;
     const userData = getUserDataById(fromId);
     const isAdmin = isUserAdmin(fromId);
+
+    // دکمه‌های اینلاین انتخاب نوع واریز ارز تون[span_10](start_span)[span_10](end_span)
+    if (action === 'ton_mode_wallet' || action === 'ton_mode_account') {
+        userData.tonOrderMode = action === 'ton_mode_wallet' ? 'wallet' : 'account';
+        userData.currentShopState = 'gram_wallet_flow';
+        userData.waitingForGramAmount = true;
+        saveDatabase();
+
+        await safeAnswer(callbackQuery.id);
+        await safeSendMessage(chatId, 'تعداد تون ( TON ) مورد نظر را وارد کنید:', getBackKeyboard());
+        return;
+    }
 
     if (action === 'copy_card') {
         await safeAnswer(callbackQuery.id, { text: `شماره کارت کپی شد:\n${CARD_NUMBER}`, show_alert: true });
@@ -2499,7 +2627,6 @@ async function handleCallback(callbackQuery) {
         return;
     }
 
-    // بررسی دسترسی ادمین برای دکمه‌های مدیریتی
     const adminActions = ['order_done_', 'order_reject_', 'approve_receipt_', 'reject_receipt_', 'reply_'];
     if (adminActions.some(p => action.startsWith(p)) && !isAdmin) {
         await safeAnswer(callbackQuery.id, { text: '⛔ شما دسترسی ندارید.', show_alert: true });
@@ -2508,7 +2635,7 @@ async function handleCallback(callbackQuery) {
 
     const adminData = getUserDataById(fromId);
 
-    // 1. انجام سفارش (تایید سفارش)
+    // 1. انجام دستی سفارش
     if (action.startsWith('order_done_')) {
         const trackingCode = action.replace('order_done_', '');
         const order = db.orders[trackingCode];
@@ -2565,7 +2692,7 @@ async function handleCallback(callbackQuery) {
         return;
     }
 
-    // 3. تایید رسید واریزی
+    // 3. تایید رسید واریزی و ثبت/ارسال خودکار سفارش معلق
     if (action.startsWith('approve_receipt_')) {
         const parts = action.replace('approve_receipt_', '').split('_');
         const targetUserId = parts[0];
@@ -2600,7 +2727,7 @@ async function handleCallback(callbackQuery) {
             `💼 موجودی جدید شما: ${targetUserObj.wallet.toLocaleString()} تومان`
         );
 
-        // اگر کاربر سفارشی منتظر خودکار داشت
+        // اجرای سفارش معلق کاربر به صورت خودکار
         const pendingOrder = targetUserObj.pendingOrderToAutoPlace;
         if (pendingOrder) {
             let requiredAmount = 0;
@@ -2619,60 +2746,12 @@ async function handleCallback(callbackQuery) {
                 targetUserObj.wallet -= requiredAmount;
                 const now = getFormattedTime();
                 let trackingCode = '';
-                let adminOrderMsg = '';
                 let giftName = '';
 
-                if (pendingOrder.type === 'star') {
-                    trackingCode = 'STR-' + Math.floor(10000 + Math.random() * 90000);
-                    giftName = `استارز تلگرام (${pendingOrder.starCount} عدد)`;
-                    db.orders[trackingCode] = {
-                        userId: targetUserId,
-                        firstName: targetUserObj.firstName,
-                        giftName: giftName,
-                        count: pendingOrder.starCount,
-                        recipient: pendingOrder.starRecipient,
-                        comment: 'ندارد',
-                        amount: requiredAmount,
-                        time: now,
-                        status: 'pending'
-                    };
-                    adminOrderMsg =
-                        `<b>[ سفارش جدید خودکار (استارز) ]</b>\n\n` +
-                        `👤 نام کاربر: ${escapeHTML(targetUserObj.firstName)}\n` +
-                        `🆔 آیدی عددی: <code>${targetUserId}</code>\n` +
-                        `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
-                        `💫 تعداد استارز: ${pendingOrder.starCount}\n` +
-                        `📥 دریافت‌کننده: @${escapeHTML(pendingOrder.starRecipient)}\n` +
-                        `💰 مبلغ کل: ${requiredAmount.toLocaleString()} تومان\n` +
-                        `⏰ زمان ثبت: ${now}`;
-                } else if (pendingOrder.type === 'gift') {
-                    trackingCode = 'STZ-' + Math.floor(10000 + Math.random() * 90000);
-                    giftName = pendingOrder.selectedGiftName;
-                    db.orders[trackingCode] = {
-                        userId: targetUserId,
-                        firstName: targetUserObj.firstName,
-                        giftName: giftName,
-                        count: 1,
-                        recipient: pendingOrder.recipientUsername,
-                        comment: pendingOrder.commentText,
-                        amount: requiredAmount,
-                        time: now,
-                        status: 'pending'
-                    };
-                    adminOrderMsg =
-                        `<b>[ سفارش جدید خودکار (گیفت) ]</b>\n\n` +
-                        `👤 نام کاربر: ${escapeHTML(targetUserObj.firstName)}\n` +
-                        `🆔 آیدی عددی: <code>${targetUserId}</code>\n` +
-                        `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
-                        `🎁 نام گیفت: ${escapeHTML(pendingOrder.selectedGiftName)}\n` +
-                        `📥 دریافت‌کننده: @${escapeHTML(pendingOrder.recipientUsername)}\n` +
-                        `💬 کامنت: ${escapeHTML(pendingOrder.commentText)}\n` +
-                        `💰 مبلغ کل: ${requiredAmount.toLocaleString()} تومان\n` +
-                        `⏰ زمان ثبت: ${now}`;
-                } else if (pendingOrder.type === 'gram') {
-                    trackingCode = 'GRAM-' + Math.floor(10000 + Math.random() * 90000);
-                    giftName = `ارز گرام (${pendingOrder.gramAmount} GRAM)`;
-                    db.orders[trackingCode] = {
+                if (pendingOrder.type === 'gram') {
+                    trackingCode = 'TON-' + Math.floor(10000 + Math.random() * 90000);
+                    giftName = `ارز تون (${pendingOrder.gramAmount} TON)`;
+                    const orderObj = {
                         userId: targetUserId,
                         firstName: targetUserObj.firstName,
                         giftName: giftName,
@@ -2683,37 +2762,82 @@ async function handleCallback(callbackQuery) {
                         time: now,
                         status: 'pending'
                     };
-                    adminOrderMsg =
-                        `<b>[ سفارش جدید خودکار (گرام) ]</b>\n\n` +
-                        `👤 نام کاربر: ${escapeHTML(targetUserObj.firstName)}\n` +
-                        `🆔 آیدی عددی: <code>${targetUserId}</code>\n` +
-                        `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
-                        `💠 مقدار گرام: ${pendingOrder.gramAmount}\n` +
-                        `📫 آدرس ولت: <code>${escapeHTML(pendingOrder.gramWalletAddress)}</code>\n` +
-                        `💬 ممو / کامنت: ${escapeHTML(pendingOrder.gramMemo)}\n` +
-                        `💰 مبلغ کل: ${requiredAmount.toLocaleString()} تومان\n` +
-                        `⏰ زمان ثبت: ${now}`;
-                }
+                    db.orders[trackingCode] = orderObj;
 
-                targetUserObj.pendingOrderToAutoPlace = null;
-                consumeDiscount(targetUserObj);
-                saveDatabase();
+                    targetUserObj.pendingOrderToAutoPlace = null;
+                    consumeDiscount(targetUserObj);
+                    saveDatabase();
 
-                await safeSendMessage(targetUserId,
-                    `🚀 <b>سفارش معلق شما پس از تایید واریزی به طور خودکار ثبت گردید!</b>\n\n` +
-                    `📦 کد پیگیری سفارش: <code>${trackingCode}</code>\n` +
-                    `🛒 محصول: ${escapeHTML(giftName)}\n` +
-                    `💳 مبلغ: ${requiredAmount.toLocaleString()} تومان`
-                );
+                    // واریز اتوماتیک TON به کیف پول
+                    const autoSuccess = await processAutoTonPayout(orderObj, trackingCode);
 
-                const adminOrderMarkup = {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: '✅ انجام شد', callback_data: `order_done_${trackingCode}` }, { text: '❌ رد شد', callback_data: `order_reject_${trackingCode}` }]
-                        ]
+                    if (!autoSuccess) {
+                        await safeSendMessage(targetUserId,
+                            `🚀 <b>سفارش معلق شما ثبت شد!</b>\n\n` +
+                            `📦 کد پیگیری سفارش: <code>${trackingCode}</code>\n` +
+                            `🛒 محصول: ${escapeHTML(giftName)}\n` +
+                            `💳 مبلغ: ${requiredAmount.toLocaleString()} تومان`
+                        );
+                        const adminOrderMsg =
+                            `<b>[ سفارش جدید خودکار (تون) ]</b>\n\n` +
+                            `👤 نام کاربر: ${escapeHTML(targetUserObj.firstName)}\n` +
+                            `🆔 آیدی عددی: <code>${targetUserId}</code>\n` +
+                            `🏷️ کد پیگیری: <code>${trackingCode}</code>\n` +
+                            `💠 مقدار: ${pendingOrder.gramAmount} TON\n` +
+                            `📫 مقصد: <code>${escapeHTML(pendingOrder.gramWalletAddress)}</code>\n` +
+                            `💰 مبلغ کل: ${requiredAmount.toLocaleString()} تومان\n` +
+                            `⏰ زمان ثبت: ${now}`;
+
+                        await notifyAdmins(adminOrderMsg, {
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: '✅ انجام شد', callback_data: `order_done_${trackingCode}` }, { text: '❌ رد شد', callback_data: `order_reject_${trackingCode}` }]
+                                ]
+                            }
+                        });
                     }
-                };
-                await notifyAdmins(adminOrderMsg, adminOrderMarkup);
+                } else {
+                    if (pendingOrder.type === 'star') {
+                        trackingCode = 'STR-' + Math.floor(10000 + Math.random() * 90000);
+                        giftName = `استارز تلگرام (${pendingOrder.starCount} عدد)`;
+                        db.orders[trackingCode] = {
+                            userId: targetUserId,
+                            firstName: targetUserObj.firstName,
+                            giftName: giftName,
+                            count: pendingOrder.starCount,
+                            recipient: pendingOrder.starRecipient,
+                            comment: 'ندارد',
+                            amount: requiredAmount,
+                            time: now,
+                            status: 'pending'
+                        };
+                    } else if (pendingOrder.type === 'gift') {
+                        trackingCode = 'STZ-' + Math.floor(10000 + Math.random() * 90000);
+                        giftName = pendingOrder.selectedGiftName;
+                        db.orders[trackingCode] = {
+                            userId: targetUserId,
+                            firstName: targetUserObj.firstName,
+                            giftName: giftName,
+                            count: 1,
+                            recipient: pendingOrder.recipientUsername,
+                            comment: pendingOrder.commentText,
+                            amount: requiredAmount,
+                            time: now,
+                            status: 'pending'
+                        };
+                    }
+
+                    targetUserObj.pendingOrderToAutoPlace = null;
+                    consumeDiscount(targetUserObj);
+                    saveDatabase();
+
+                    await safeSendMessage(targetUserId,
+                        `🚀 <b>سفارش معلق شما پس از تایید واریزی به طور خودکار ثبت گردید!</b>\n\n` +
+                        `📦 کد پیگیری سفارش: <code>${trackingCode}</code>\n` +
+                        `🛒 محصول: ${escapeHTML(giftName)}\n` +
+                        `💳 مبلغ: ${requiredAmount.toLocaleString()} تومان`
+                    );
+                }
             }
         }
         return;
