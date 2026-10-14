@@ -2,7 +2,7 @@
  * ============================================================================
  * Stars Plus / نوا شاپ TELEGRAM BOT - V6
  * - ارسال آنی TON از ولت ربات
- * - جاگذاری مستقیم کلیدها و توکن (طبق درخواست کاربر)
+ * - جاگذاری مستقیم کلیدها و توکن
  * ============================================================================
  */
 
@@ -31,7 +31,7 @@ const { mnemonicToPrivateKey } = require('@ton/crypto');
 const { Address } = require('@ton/core');
 
 // ============================================================================
-// TON WALLET & BOT CONFIG (جاگذاری مستقیم مقادیر)
+// TON WALLET & BOT CONFIG
 // ============================================================================
 
 const TOKEN = '8696660217:AAEBI6iOD-OAZpWbCIGy2KU-s-Fc5OQwwVE';
@@ -1340,12 +1340,25 @@ async function handleMessage(msg) {
     if (isAdmin && text === '/diag') {
         try {
             const info = await bot.getWebHookInfo();
+            const pair = await getTonKeyPair();
+            let walletStatusText = '🔴 غیرفعال / تنظیم نشده';
+            if (pair) {
+                try {
+                    const client = new TonClient({ endpoint: TON_ENDPOINTS[0] });
+                    const balanceNano = await client.getBalance(pair.wallet.address);
+                    const balanceTon = (Number(balanceNano) / 1e9).toFixed(4);
+                    walletStatusText = `🟢 فعال\n💎 آدرس ولت: <code>${pair.wallet.address.toString()}</code>\n💰 موجودی ولت: <b>${balanceTon} TON</b>`;
+                } catch (err) {
+                    walletStatusText = `🟢 فعال (آدرس: <code>${pair.wallet.address.toString()}</code>)\n⚠️ خطا در دریافت موجودی آنلاین`;
+                }
+            }
+
             await safeSendMessage(chatId,
-                `<b>🔎 تشخیص ربات</b>\n\n` +
+                `<b>🔎 تشخیص و وضعیت ربات</b>\n\n` +
                 `Webhook: <code>${escapeHTML(info.url || 'ندارد')}</code>\n` +
                 `پیام‌های در انتظار: ${info.pending_update_count}\n` +
-                `آخرین خطا: ${escapeHTML(info.last_error_message || 'ندارد')}\n` +
-                `ولت ربات: ${WALLET_MNEMONIC ? 'تنظیم شده' : 'تنظیم نشده'}`,
+                `آخرین خطا: ${escapeHTML(info.last_error_message || 'ندارد')}\n\n` +
+                `<b>💎 وضعیت ولت TON:</b>\n${walletStatusText}`,
                 adminPanelMarkup);
         } catch (e) {
             await safeSendMessage(chatId, `❌ خطا در تشخیص: ${escapeHTML(e.message)}`, adminPanelMarkup);
