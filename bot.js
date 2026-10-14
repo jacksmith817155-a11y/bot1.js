@@ -1,11 +1,8 @@
 /**
  * ============================================================================
  * Stars Plus / نوا شاپ TELEGRAM BOT - V6
- * - ارسال آنی TON از ولت ربات (بدون Tonkeeper)
- * - در صورت کمبود موجودی ولت، سفارش به حالت دستی منتقل می‌شود
- * - فاکتور TON بدون بخش تخفیف
- * - دکمه مشاهده تراکنش کاربر
- * - تمام کلیدها و سید‌فریز از متغیر محیطی خوانده می‌شوند (نه داخل کد)
+ * - ارسال آنی TON از ولت ربات
+ * - جاگذاری مستقیم کلیدها و توکن (طبق درخواست کاربر)
  * ============================================================================
  */
 
@@ -34,11 +31,13 @@ const { mnemonicToPrivateKey } = require('@ton/crypto');
 const { Address } = require('@ton/core');
 
 // ============================================================================
-// TON WALLET CONFIG (فقط از ENV)
+// TON WALLET & BOT CONFIG (جاگذاری مستقیم مقادیر)
 // ============================================================================
 
-const WALLET_MNEMONIC = (process.env.WALLET_MNEMONIC || '').trim();
+const TOKEN = '8696660217:AAEBI6iOD-OAZpWbCIGy2KU-s-Fc5OQwwVE';
+const WALLET_MNEMONIC = 'keen achieve minute mule device text lonely vacuum door crystal month wreck agent bottom force minimum spy guess want plug opera protect away burden';
 const TONCENTER_API_KEY = (process.env.TONCENTER_API_KEY || '').trim();
+
 const TON_FEE_RESERVE = 0.05; // TON رزرو برای کارمزد شبکه
 const TON_ENDPOINTS = [
     'https://toncenter.com/api/v2/jsonRPC',
@@ -46,11 +45,11 @@ const TON_ENDPOINTS = [
 ];
 const TON_NET_TIMEOUT_MS = 8000;
 
-let tonKeyPair = null;       // کش کلید (مشتق‌سازی mnemonic کند است، فقط یک بار انجام می‌شود)
-let tonCachedSeqno = null;   // seqno محلی تا یک درخواست شبکه کمتر زده شود
+let tonKeyPair = null;       // کش کلید
+let tonCachedSeqno = null;   // seqno محلی
 let tonQueue = Promise.resolve();
 
-// صف سریال برای جلوگیری از تداخل seqno وقتی چند سفارش همزمان است
+// صف سریال برای جلوگیری از تداخل seqno
 function enqueueTon(task) {
     const run = tonQueue.then(task, task);
     tonQueue = run.catch(() => {});
@@ -92,8 +91,6 @@ function isValidTonAddress(addr) {
 
 /**
  * ارسال TON از ولت ربات.
- * پاسخ: { success, txHash, txLink, verify? } یا { success:false, manual:true, reason }
- * تأیید نهایی شبکه منتظر نمی‌ماند تا سرعت پاسخ بالا بماند؛ پذیرش توسط TonCenter کافی است.
  */
 async function sendTonFromBot(toAddress, amountTon, memo) {
     const pair = await getTonKeyPair();
@@ -152,7 +149,7 @@ async function sendTonFromBot(toAddress, amountTon, memo) {
                 verify: { contract, expected: seqno + 1 }
             };
         } catch (err) {
-            tonCachedSeqno = null; // در خطا کش seqno باطل می‌شود
+            tonCachedSeqno = null;
             lastErr = err.message || String(err);
             SystemLogger.error('TON', `endpoint ${endpoint} failed`, err);
         }
@@ -161,7 +158,6 @@ async function sendTonFromBot(toAddress, amountTon, memo) {
     return { success: false, manual: true, reason: `خطا در ارتباط با شبکه TON: ${lastErr}` };
 }
 
-// بررسی پس‌زمینه‌ی تأیید تراکنش؛ اگر تأیید نشد، ادمین مطلع می‌شود
 function verifyTonLater(verify, trackingCode) {
     if (!verify) return;
     (async () => {
@@ -197,8 +193,6 @@ server.listen(PORT, () => {
 // CONFIGURATION & CONSTANTS
 // ============================================================================
 
-const TOKEN = (process.env.BOT_TOKEN || process.env.TOKEN || '')
-    .toString().trim().replace(/^["']|["']$/g, '');
 const TOKEN_LOOKS_VALID = /^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(TOKEN);
 const ADMIN_ID_USERNAME = '@shantiaNFT';
 const ADMIN_NUMERIC_ID = 8750484397;
@@ -257,10 +251,7 @@ const TelegramBot = typeof TelegramModule === 'function'
     );
 
 if (!TOKEN_LOOKS_VALID) {
-    SystemLogger.error('Token', '❌ توکن ربات نامعتبر یا تنظیم نشده است! متغیر BOT_TOKEN را ست کنید.');
-}
-if (!WALLET_MNEMONIC) {
-    SystemLogger.error('Wallet', '⚠️ WALLET_MNEMONIC تنظیم نشده؛ همه سفارش‌های TON به حالت دستی می‌روند.');
+    SystemLogger.error('Token', '❌ توکن ربات نامعتبر یا تنظیم نشده است!');
 }
 
 const bot = new TelegramBot(TOKEN, {
@@ -880,7 +871,6 @@ async function fetchGramData() {
     };
 }
 
-// قیمت نهایی TON بدون تخفیف
 async function gramTotal(amountTon) {
     const price = await getBinanceTONPriceInToman();
     return Math.round(Number(amountTon) * price);
@@ -1016,7 +1006,6 @@ function giftInvoiceKeyboard() {
     };
 }
 
-// فاکتور TON: بدون تخفیف
 function gramInvoiceKeyboard() {
     return {
         reply_markup: {
@@ -1120,7 +1109,6 @@ async function showGiftInvoice(chatId, userData, edit = false) {
     }
 }
 
-// فاکتور TON - بدون بخش تخفیف، با مقادیر واقعی کاربر
 async function showGramInvoice(chatId, userData) {
     const price = await getBinanceTONPriceInToman();
     userData.gramPricePerUnit = price;
@@ -1155,11 +1143,6 @@ function tonCompletedText(order, trackingCode) {
         `⚡ ارز تون به ولت شما ارسال شد.\nاز اعتماد و انتخاب شما سپاسگزاریم!`;
 }
 
-/**
- * پردازش کامل سفارش TON:
- * 1) ارسال آنی از ولت ربات و ارسال لینک تراکنش کاربر
- * 2) در صورت نبود موجودی/خطا: حالت دستی و اطلاع به ادمین
- */
 async function deliverTonOrder(order, trackingCode) {
     safeSendMessage(order.userId,
         `⏳ <b>در حال پردازش سفارش شما...</b>\n\n🏷️ کد پیگیری: <code>${trackingCode}</code>`);
@@ -1191,7 +1174,6 @@ async function deliverTonOrder(order, trackingCode) {
         return true;
     }
 
-    // حالت دستی
     order.status = 'manual_pending';
     saveDatabase();
 
@@ -2503,4 +2485,267 @@ async function handleCallback(callbackQuery) {
     if (action.startsWith('add_balance_')) {
         const shortage = parseInt(action.replace('add_balance_', ''));
         if (isNaN(shortage) || shortage <= 0) {
-            awai
+            await safeAnswer(callbackQuery.id, { text: 'خطا در محاسبه مبلغ.', show_alert: true });
+            return;
+        }
+        userData.waitingForAmount = false;
+        userData.lastAmount = shortage;
+        userData.waitingForReceipt = true;
+        saveDatabase();
+
+        const rialAmount = shortage * 10;
+        await safeAnswer(callbackQuery.id);
+        await safeSendMessage(chatId,
+            `💳 <b>افزایش موجودی تکمیلی</b>\n\n` +
+            `مبلغ انتخابی: ${shortage.toLocaleString()} تومان\n` +
+            `مبلغ قابل واریز: <b>${rialAmount.toLocaleString()} ریال</b>\n\n` +
+            `شماره کارت:\n<code>${CARD_NUMBER}</code>\n` +
+            `به نام: ${CARD_OWNER}`,
+            {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '📋 کپی شماره کارت', copy_text: { text: CARD_NUMBER } }],
+                        [{ text: '📋 کپی دقیق مبلغ (ریال)', copy_text: { text: String(rialAmount) } }]
+                    ]
+                }
+            });
+        await safeSendMessage(chatId, '📸 پس از واریز، عکس رسید را همین‌جا ارسال کنید.', getBackKeyboard());
+        return;
+    }
+
+    if (action === 'track_receipt_main') {
+        await safeAnswer(callbackQuery.id);
+        if (userData.lastReceiptCode) {
+            const status = db.processedReceipts[userData.lastReceiptCode] || 'pending';
+            let statusFa = 'در حال بررسی توسط مدیریت ⏳';
+            if (status === 'approved') statusFa = 'تایید شده ✅';
+            if (status === 'rejected') statusFa = 'رد شده ❌';
+
+            await safeSendMessage(chatId,
+                `<b>[ وضعیت آخرین رسید شما ]</b>\n\n` +
+                `🏷️ شماره رسید: <code>${userData.lastReceiptCode}</code>\n` +
+                `💰 مبلغ: ${userData.lastReceiptAmount.toLocaleString()} تومان\n` +
+                `⏰ زمان ارسال: ${userData.lastReceiptTime}\n` +
+                `📊 وضعیت: ${statusFa}`);
+        } else {
+            await safeSendMessage(chatId, 'شما هیچ رسید فعال یا در حال بررسی ندارید.');
+        }
+        return;
+    }
+
+    // ---------------- عملیات مدیریت (تایید/رد رسید و سفارش) ----------------
+    if (isAdmin) {
+        if (action.startsWith('approve_receipt_')) {
+            const parts = action.replace('approve_receipt_', '').split('_');
+            const targetUserId = parts[0];
+            const amount = parseInt(parts[1]);
+            const receiptCode = parts[2];
+
+            if (db.processedReceipts[receiptCode]) {
+                await safeAnswer(callbackQuery.id, { text: 'این رسید قبلاً بررسی شده است.', show_alert: true });
+                return;
+            }
+
+            db.processedReceipts[receiptCode] = 'approved';
+            const targetUser = getUserDataById(targetUserId);
+            targetUser.wallet += amount;
+
+            db.approvedReceiptsHistory.push({
+                userId: targetUserId,
+                amount: amount,
+                receiptCode: receiptCode,
+                time: getFormattedTime()
+            });
+            saveDatabase();
+
+            await safeAnswer(callbackQuery.id, { text: 'رسید تایید و موجودی افزوده شد.' });
+            await editAdminMessage(msg, (msg.caption || msg.text || '') + `\n\n✅ <b>توسط مدیریت تایید شد.</b>`);
+            await safeSendMessage(targetUserId, `✅ رسید شما به مبلغ ${amount.toLocaleString()} تومان تایید شد و موجودی شما شارژ گردید.`);
+
+            if (targetUser.pendingOrderToAutoPlace) {
+                const pending = targetUser.pendingOrderToAutoPlace;
+                targetUser.pendingOrderToAutoPlace = null;
+                saveDatabase();
+
+                if (pending.type === 'gram') {
+                    const total = await gramTotal(pending.gramAmount);
+                    if (targetUser.wallet >= total) {
+                        targetUser.wallet -= total;
+                        const trackingCode = 'TON-' + Math.floor(10000 + Math.random() * 90000);
+                        const order = {
+                            userId: targetUserId,
+                            firstName: targetUser.firstName,
+                            giftName: `ارز تون (${pending.gramAmount} TON)`,
+                            count: pending.gramAmount,
+                            recipient: pending.gramWalletAddress,
+                            comment: pending.gramMemo,
+                            amount: total,
+                            time: getFormattedTime(),
+                            status: 'pending',
+                            tonMode: pending.tonOrderMode
+                        };
+                        db.orders[trackingCode] = order;
+                        saveDatabase();
+
+                        await safeSendMessage(targetUserId, `⚡ موجودی شما کافی شد و سفارش TON شما به صورت خودکار ثبت گردید.`);
+                        await deliverTonOrder(order, trackingCode);
+                    }
+                } else if (pending.type === 'star') {
+                    const unitPrice = await fetchStarsPrice();
+                    const total = Math.round(unitPrice * pending.starCount);
+                    if (targetUser.wallet >= total) {
+                        targetUser.wallet -= total;
+                        const trackingCode = 'STR-' + Math.floor(10000 + Math.random() * 90000);
+                        const now = getFormattedTime();
+                        db.orders[trackingCode] = {
+                            userId: targetUserId,
+                            firstName: targetUser.firstName,
+                            giftName: `استارز تلگرام (${pending.starCount} عدد)`,
+                            count: pending.starCount,
+                            recipient: pending.starRecipient,
+                            comment: 'ندارد',
+                            amount: total,
+                            time: now,
+                            status: 'pending'
+                        };
+                        saveDatabase();
+
+                        await safeSendMessage(targetUserId, `⭐ موجودی شما کافی شد و سفارش استارز شما ثبت گردید.\nکد پیگیری: <code>${trackingCode}</code>`);
+                        await notifyAdmins(
+                            `<b>[ سفارش خودکار استارز ]</b>\n\n` +
+                            `👤 کاربر: ${escapeHTML(targetUser.firstName)}\n` +
+                            `🆔 آیدی: <code>${targetUserId}</code>\n` +
+                            `🏷️ کد: <code>${trackingCode}</code>\n` +
+                            `💫 تعداد: ${pending.starCount}\n` +
+                            `📥 دریافت‌کننده: @${escapeHTML(pending.starRecipient)}\n` +
+                            `💰 مبلغ: ${total.toLocaleString()} تومان`,
+                            { reply_markup: { inline_keyboard: [[
+                                { text: '✅ انجام شد', callback_data: `order_done_${trackingCode}` },
+                                { text: '❌ رد شد', callback_data: `order_reject_${trackingCode}` }
+                            ]] } });
+                    }
+                } else if (pending.type === 'gift') {
+                    const usdtToman = await getUsdtTomanPrice();
+                    const total = Math.round(pending.selectedGiftStars * STAR_USD * usdtToman * PRICE_MARGIN);
+                    if (targetUser.wallet >= total) {
+                        targetUser.wallet -= total;
+                        const trackingCode = 'STZ-' + Math.floor(10000 + Math.random() * 90000);
+                        const now = getFormattedTime();
+                        db.orders[trackingCode] = {
+                            userId: targetUserId,
+                            firstName: targetUser.firstName,
+                            giftName: pending.selectedGiftName,
+                            count: 1,
+                            recipient: pending.recipientUsername,
+                            comment: pending.commentText,
+                            amount: total,
+                            time: now,
+                            status: 'pending'
+                        };
+                        saveDatabase();
+
+                        await safeSendMessage(targetUserId, `🎁 موجودی شما کافی شد و سفارش گیفت شما ثبت گردید.\nکد پیگیری: <code>${trackingCode}</code>`);
+                        await notifyAdmins(
+                            `<b>[ سفارش خودکار گیفت ]</b>\n\n` +
+                            `👤 کاربر: ${escapeHTML(targetUser.firstName)}\n` +
+                            `🆔 آیدی: <code>${targetUserId}</code>\n` +
+                            `🏷️ کد: <code>${trackingCode}</code>\n` +
+                            `🎁 نام: ${escapeHTML(pending.selectedGiftName)}\n` +
+                            `📥 دریافت‌کننده: @${escapeHTML(pending.recipientUsername)}\n` +
+                            `💰 مبلغ: ${total.toLocaleString()} تومان`,
+                            { reply_markup: { inline_keyboard: [[
+                                { text: '✅ انجام شد', callback_data: `order_done_${trackingCode}` },
+                                { text: '❌ رد شد', callback_data: `order_reject_${trackingCode}` }
+                            ]] } });
+                    }
+                }
+            }
+            return;
+        }
+
+        if (action.startsWith('reject_receipt_')) {
+            const parts = action.replace('reject_receipt_', '').split('_');
+            const targetUserId = parts[0];
+            const receiptCode = parts[1];
+
+            if (db.processedReceipts[receiptCode]) {
+                await safeAnswer(callbackQuery.id, { text: 'این رسید قبلاً بررسی شده است.', show_alert: true });
+                return;
+            }
+
+            const adminObj = getUserDataById(fromId);
+            adminObj.waitingForReceiptRejectReason = true;
+            adminObj.rejectTargetId = targetUserId;
+            adminObj.rejectReceiptCode = receiptCode;
+            saveDatabase();
+
+            await safeAnswer(callbackQuery.id);
+            await editAdminMessage(msg, (msg.caption || msg.text || '') + `\n\n❌ <b>توسط مدیریت رد شد. (در حال ارسال دلیل...)</b>`);
+            await safeSendMessage(fromId, `لطفاً دلیل رد رسید <code>${receiptCode}</code> را ارسال کنید:`, getBackKeyboard());
+            return;
+        }
+
+        if (action.startsWith('reply_')) {
+            const targetUserId = action.replace('reply_', '');
+            const adminObj = getUserDataById(fromId);
+            adminObj.adminReplyingTo = targetUserId;
+            saveDatabase();
+
+            await safeAnswer(callbackQuery.id);
+            await safeSendMessage(fromId, `لطفاً پاسخ خود را برای کاربر <code>${targetUserId}</code> ارسال کنید:`, getBackKeyboard());
+            return;
+        }
+
+        if (action.startsWith('order_done_')) {
+            const trackingCode = action.replace('order_done_', '');
+            const order = db.orders[trackingCode];
+
+            if (!order) {
+                await safeAnswer(callbackQuery.id, { text: 'سفارش یافت نشد.', show_alert: true });
+                return;
+            }
+
+            if (order.status === 'completed') {
+                await safeAnswer(callbackQuery.id, { text: 'این سفارش قبلاً تکمیل شده است.', show_alert: true });
+                return;
+            }
+
+            order.status = 'completed';
+            order.paidAt = getFormattedTime();
+            saveDatabase();
+
+            await safeAnswer(callbackQuery.id, { text: 'سفارش به‌عنوان انجام‌شده علامت زده شد.' });
+            await editAdminMessage(msg, (msg.text || msg.caption || '') + `\n\n✅ <b>تکمیل و ارسال شد.</b>`);
+            await safeSendMessage(order.userId, `✅ سفارش شما با کد پیگیری <code>${trackingCode}</code> با موفقیت انجام شد.`);
+            await sendChannelReport(order, order.txLink || null);
+            return;
+        }
+
+        if (action.startsWith('order_reject_')) {
+            const trackingCode = action.replace('order_reject_', '');
+            const order = db.orders[trackingCode];
+
+            if (!order) {
+                await safeAnswer(callbackQuery.id, { text: 'سفارش یافت نشد.', show_alert: true });
+                return;
+            }
+
+            if (order.status === 'rejected') {
+                await safeAnswer(callbackQuery.id, { text: 'این سفارش قبلاً رد شده است.', show_alert: true });
+                return;
+            }
+
+            const adminObj = getUserDataById(fromId);
+            adminObj.waitingForOrderRejectReason = true;
+            adminObj.rejectOrderCode = trackingCode;
+            saveDatabase();
+
+            await safeAnswer(callbackQuery.id);
+            await editAdminMessage(msg, (msg.text || msg.caption || '') + `\n\n❌ <b>توسط مدیریت رد شد. (در حال ثبت دلیل...)</b>`);
+            await safeSendMessage(fromId, `لطفاً دلیل رد سفارش <code>${trackingCode}</code> را ارسال کنید:`, getBackKeyboard());
+            return;
+        }
+    }
+
+    await safeAnswer(callbackQuery.id);
+}
